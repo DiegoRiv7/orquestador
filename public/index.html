@@ -348,109 +348,133 @@ function setHeaderState(state) {
     else                          { hDot.classList.add('off'); hStage.textContent = 'Desconectado'; laBadge.textContent = 'Offline'; laBadge.style.color = 'var(--red)'; }
 }
 
+// ── Helper: crear boton ───────────────────────────────────────
+function mkBtn(cls, label, onclick) {
+    const b = document.createElement('button');
+    b.className = cls;
+    b.textContent = label;
+    b.onclick = onclick;
+    return b;
+}
+function mkGrid(cols, btns) {
+    const d = document.createElement('div');
+    d.className = 'action-grid cols-' + cols;
+    btns.forEach(b => d.appendChild(b));
+    return d;
+}
+function mkPreview(label, text) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'background:#2C2C2E;border-radius:14px;padding:11px 13px;margin-bottom:10px;max-height:140px;overflow-y:auto;';
+    const lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:0.72rem;font-weight:700;color:rgba(235,235,245,0.45);letter-spacing:0.3px;margin-bottom:6px;';
+    lbl.textContent = label;
+    const body = document.createElement('div');
+    body.style.cssText = 'font-size:0.82rem;color:rgba(235,235,245,0.75);line-height:1.5;white-space:pre-wrap;word-break:break-word;';
+    body.textContent = text ? text.slice(0, 600) : '(sin resultado)';
+    wrap.appendChild(lbl);
+    wrap.appendChild(body);
+    return wrap;
+}
+
 // ── Render action panel ──────────────────────────────────────
 function renderPanel(state, data) {
     currentState = state;
     currentData  = data || {};
     const p = panelContent;
+    p.textContent = ''; // limpiar sin innerHTML
 
     const stageLabels = {
-        idle:           'Listo',
-        gemini_working: 'Gemini trabajando...',
-        gemini_done:    'Gemini terminó',
-        manus_working:  'Manus trabajando...',
-        manus_done:     'Manus terminó',
-        claude_working: 'Claude trabajando...',
-        claude_done:    'Claude terminó',
-        deploying:      'Desplegando...',
-        done:           'Completado'
+        idle:'Listo', gemini_working:'Gemini trabajando...', gemini_done:'Gemini termino',
+        manus_working:'Manus trabajando...', manus_done:'Manus termino',
+        claude_working:'Claude trabajando...', claude_done:'Claude termino',
+        deploying:'Desplegando...', done:'Completado'
     };
     hStage.textContent = stageLabels[state] || state;
 
     if (state === S.IDLE) {
-        p.innerHTML = `
-            <div class="idea-area">
-                <textarea class="idea-textarea" id="ideaInput" placeholder="¿Qué proyecto quieres construir hoy?" rows="3"></textarea>
-                <button class="btn-start" onclick="startIdea()">Iniciar con Gemini</button>
-            </div>`;
-        setTimeout(() => { const t = document.getElementById('ideaInput'); if(t) t.focus(); }, 100);
+        const area = document.createElement('div');
+        area.className = 'idea-area';
+        const ta = document.createElement('textarea');
+        ta.className = 'idea-textarea';
+        ta.id = 'ideaInput';
+        ta.placeholder = 'Que proyecto quieres construir hoy?';
+        ta.rows = 3;
+        area.appendChild(ta);
+        area.appendChild(mkBtn('btn-start', 'Iniciar con Gemini', startIdea));
+        p.appendChild(area);
+        setTimeout(() => ta.focus(), 100);
     }
 
     else if (state === S.GEMINI_WORKING || state === S.MANUS_WORKING || state === S.CLAUDE_WORKING || state === S.DEPLOYING) {
-        const labels = { gemini_working:'Refinando idea con Gemini', manus_working:'Manus construyendo el proyecto', claude_working:'Claude Code revisando y corrigiendo', deploying:'Empujando a GitHub y desplegando' };
-        const sublabels = { gemini_working:'Monitoreando respuesta automáticamente', manus_working:'Esto puede tardar varios minutos', claude_working:'Analizando y aplicando mejoras', deploying:'Git push → GitHub Actions → VPS' };
-        const captureAction = state === S.GEMINI_WORKING ? 'capture_gemini' : state === S.MANUS_WORKING ? 'capture_manus' : null;
+        const labels = { gemini_working:'Refinando con Gemini', manus_working:'Manus construyendo', claude_working:'Claude revisando', deploying:'Desplegando...' };
+        const sublabels = { gemini_working:'Esperando respuesta...', manus_working:'Puede tardar varios minutos', claude_working:'Aplicando mejoras', deploying:'Git push en proceso' };
         setHeaderState('busy');
-        p.innerHTML = `
-            <div class="working-area">
-                <div class="spinner" style="width:28px;height:28px;border-width:3px;"></div>
-                <div class="working-label">${labels[state]}</div>
-                <div class="working-sublabel">${sublabels[state]}</div>
-                ${captureAction === 'capture_gemini' ? `<button class="ab ab-orange" style="margin-top:4px;" onclick="sendAction('${captureAction}')">📋 Copié la respuesta — Capturar</button>` : ''}
-                ${captureAction === 'capture_manus' ? `<button class="ab ab-orange" style="margin-top:4px;" onclick="sendAction('${captureAction}')">📋 Copié el resultado — Capturar</button>` : ''}
-                <button class="btn-cancel" onclick="sendAction('cancel')">Cancelar</button>
-            </div>`;
+        const area = document.createElement('div');
+        area.className = 'working-area';
+        const spin = document.createElement('div');
+        spin.className = 'spinner';
+        spin.style.cssText = 'width:28px;height:28px;border-width:3px;';
+        const lbl = document.createElement('div');
+        lbl.className = 'working-label';
+        lbl.textContent = labels[state] || state;
+        const sub = document.createElement('div');
+        sub.className = 'working-sublabel';
+        sub.textContent = sublabels[state] || '';
+        area.appendChild(spin);
+        area.appendChild(lbl);
+        area.appendChild(sub);
+        if (state === S.GEMINI_WORKING) {
+            area.appendChild(mkBtn('ab ab-orange', 'Capturar respuesta de Gemini', () => sendAction('capture_gemini')));
+        }
+        if (state === S.MANUS_WORKING) {
+            area.appendChild(mkBtn('ab ab-orange', 'Capturar resultado de Manus', () => sendAction('capture_manus')));
+        }
+        area.appendChild(mkBtn('btn-cancel', 'Cancelar', () => sendAction('cancel')));
+        p.appendChild(area);
     }
 
     else if (state === S.GEMINI_DONE) {
-        p.innerHTML = `
-            <div id="previewBox" style="background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:11px 13px;margin-bottom:10px;max-height:140px;overflow-y:auto;">
-                <div style="font-size:0.72rem;font-weight:700;color:var(--text3);letter-spacing:0.3px;margin-bottom:6px;">GEMINI — RESPUESTA</div>
-                <div id="previewText" style="font-size:0.82rem;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word;"></div>
-            </div>
-            <div class="action-grid cols-1" style="margin-bottom:9px;">
-                <button class="ab ab-primary" onclick="sendAction('send_manus')">Enviar a Manus</button>
-            </div>
-            <div class="action-grid cols-2">
-                <button class="ab ab-ghost" onclick="openOverlay('Refinar con Gemini','Ajuste al prompt','refine_gemini')">Refinar</button>
-                <button class="ab ab-ghost" onclick="openOverlay('Mensaje a Gemini','Instruccion directa','custom_gemini')">Personalizar</button>
-            </div>`;
-        const el = document.getElementById('previewText');
-        if (el) el.textContent = (data && data.result) ? data.result.slice(0, 600) : '(sin resultado)';
+        if (data && data.result) p.appendChild(mkPreview('GEMINI - RESPUESTA', data.result));
+        p.appendChild(mkGrid(1, [mkBtn('ab ab-primary', 'Enviar a Manus', () => sendAction('send_manus'))]));
+        p.appendChild(mkGrid(2, [
+            mkBtn('ab ab-ghost', 'Refinar', () => openOverlay('Refinar con Gemini', 'Ajuste al prompt', 'refine_gemini')),
+            mkBtn('ab ab-ghost', 'Personalizar', () => openOverlay('Mensaje a Gemini', 'Instruccion directa', 'custom_gemini'))
+        ]));
     }
 
     else if (state === S.MANUS_DONE) {
-        p.innerHTML = `
-            <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:11px 13px;margin-bottom:10px;max-height:120px;overflow-y:auto;">
-                <div style="font-size:0.72rem;font-weight:700;color:var(--text3);letter-spacing:0.3px;margin-bottom:6px;">MANUS — RESULTADO</div>
-                <div id="previewText" style="font-size:0.82rem;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word;"></div>
-            </div>
-            <div class="action-grid cols-1" style="margin-bottom:9px;">
-                <button class="ab ab-blue" onclick="sendAction('manus_to_claude')">Enviar a Claude Code</button>
-            </div>
-            <div class="action-grid cols-3">
-                <button class="ab ab-orange" onclick="sendAction('deploy_from_manus')">Deploy directo</button>
-                <button class="ab ab-ghost" onclick="sendAction('retry_manus')">Reintentar</button>
-                <button class="ab ab-ghost" onclick="openOverlay('Mensaje a Gemini','Refinar prompt','refine_gemini')">Refinar</button>
-            </div>`;
-        const el = document.getElementById('previewText');
-        if (el) el.textContent = (data && data.result) ? data.result.slice(0, 600) : '(sin resultado)';
+        if (data && data.result) p.appendChild(mkPreview('MANUS - RESULTADO', data.result));
+        p.appendChild(mkGrid(1, [mkBtn('ab ab-blue', 'Enviar a Claude Code', () => sendAction('manus_to_claude'))]));
+        p.appendChild(mkGrid(3, [
+            mkBtn('ab ab-orange', 'Deploy directo', () => sendAction('deploy_from_manus')),
+            mkBtn('ab ab-ghost', 'Reintentar', () => sendAction('retry_manus')),
+            mkBtn('ab ab-ghost', 'Refinar', () => openOverlay('Refinar con Gemini', 'Refinar prompt', 'refine_gemini'))
+        ]));
     }
 
     else if (state === S.CLAUDE_DONE) {
-        p.innerHTML = `
-            <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:11px 13px;margin-bottom:10px;max-height:120px;overflow-y:auto;">
-                <div style="font-size:0.72rem;font-weight:700;color:var(--text3);letter-spacing:0.3px;margin-bottom:6px;">CLAUDE — REVISION</div>
-                <div id="previewText" style="font-size:0.82rem;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word;"></div>
-            </div>
-            <div class="action-grid cols-1" style="margin-bottom:9px;">
-                <button class="ab ab-primary" onclick="sendAction('deploy')">Deploy a VPS</button>
-            </div>
-            <div class="action-grid cols-2">
-                <button class="ab ab-ghost" onclick="sendAction('retry_claude')">Reintentar Claude</button>
-                <button class="ab ab-ghost" onclick="openOverlay('Instruccion para Claude','Que correccion aplicar','custom_claude')">Personalizar</button>
-            </div>`;
-        const el = document.getElementById('previewText');
-        if (el) el.textContent = (data && data.result) ? data.result.slice(0, 600) : '(sin resultado)';
+        if (data && data.result) p.appendChild(mkPreview('CLAUDE - REVISION', data.result));
+        p.appendChild(mkGrid(1, [mkBtn('ab ab-primary', 'Deploy a VPS', () => sendAction('deploy'))]));
+        p.appendChild(mkGrid(2, [
+            mkBtn('ab ab-ghost', 'Reintentar Claude', () => sendAction('retry_claude')),
+            mkBtn('ab ab-ghost', 'Personalizar', () => openOverlay('Instruccion para Claude', 'Que correccion aplicar', 'custom_claude'))
+        ]));
     }
 
     else if (state === S.DONE) {
+        const area = document.createElement('div');
+        area.className = 'done-area';
         const url = currentData.url || '';
-        p.innerHTML = `
-            <div class="done-area">
-                ${url ? `<a href="${esc(url)}" target="_blank" style="background:rgba(48,209,88,0.12);border:0.5px solid rgba(48,209,88,0.25);border-radius:13px;color:var(--green);font-size:0.85rem;font-weight:600;padding:13px 14px;text-align:center;display:block;word-break:break-all;">${esc(url)}</a>` : ''}
-                <button class="ab ab-ghost" onclick="sendAction('new_project')">+ Nuevo Proyecto</button>
-            </div>`;
+        if (url) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.textContent = url;
+            a.style.cssText = 'background:rgba(48,209,88,0.12);border-radius:13px;color:#30D158;font-size:0.85rem;font-weight:600;padding:13px 14px;text-align:center;display:block;word-break:break-all;';
+            area.appendChild(a);
+        }
+        area.appendChild(mkBtn('ab ab-ghost', '+ Nuevo Proyecto', () => sendAction('new_project')));
+        p.appendChild(area);
     }
 }
 
