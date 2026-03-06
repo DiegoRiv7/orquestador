@@ -279,7 +279,10 @@ function addUserBubble(text) {
 function addSysBubble(label, text) {
     const d = document.createElement('div');
     d.className = 'bubble bubble-sys';
-    d.innerHTML = `<strong>${esc(label)}</strong>${esc(text)}`;
+    const s = document.createElement('strong');
+    s.textContent = label;
+    d.appendChild(s);
+    d.appendChild(document.createTextNode(text));
     chat.appendChild(d);
     scrollBottom();
     return d;
@@ -296,7 +299,12 @@ function addProgress(text) {
     const d = document.createElement('div');
     d.className = 'bubble bubble-progress';
     d.id = id;
-    d.innerHTML = `<div class="spinner"></div><span>${esc(text)}</span>`;
+    const spin = document.createElement('div');
+    spin.className = 'spinner';
+    const sp = document.createElement('span');
+    sp.textContent = text;
+    d.appendChild(spin);
+    d.appendChild(sp);
     chat.appendChild(d);
     scrollBottom();
 }
@@ -539,7 +547,11 @@ function connectWithPin(pin) {
         // clear "Conectando..." first bubble
         const first = chat.querySelector('.bubble-sys');
         if (first && first.textContent.includes('Conectando')) {
-            first.innerHTML = '<strong>Sistema</strong>Hub conectado. Fábrica IA lista.';
+            first.textContent = '';
+            const s = document.createElement('strong');
+            s.textContent = 'Sistema';
+            first.appendChild(s);
+            first.appendChild(document.createTextNode('Hub conectado. Fabrica IA lista.'));
         }
         renderPanel(S.IDLE);
     });
