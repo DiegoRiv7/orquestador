@@ -238,13 +238,12 @@ async function captureGeminiResult() {
     await switchToTab('gemini.google.com');
     await new Promise(r => setTimeout(r, 800));
 
-    // Leer directo del clipboard — el usuario debe copiar la respuesta de Gemini antes
-    const result = await new Promise((resolve, reject) => {
-      exec('pbpaste', { timeout: 5000 }, (err, stdout) => {
-        if (err) reject(err);
-        else resolve((stdout || '').slice(0, 4000));
-      });
-    });
+    const result = await runScript(`
+tell application "Safari"
+  set r to do JavaScript "document.body.innerText.slice(0,4000)" in current tab of window 1
+  return r
+end tell
+    `);
 
     console.log(`[Motor] Gemini capturado: ${(result||'').length} chars`);
 
