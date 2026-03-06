@@ -14,6 +14,10 @@ const io     = require('socket.io')(server, {
 const PORT       = 3000;
 const MASTER_PIN = "1234";
 
+// Matar procesos osascript huérfanos de sesiones anteriores
+exec('pkill -f osascript', () => {});
+exec('pkill -f "fab_"', () => {});
+
 // ─── Auth ─────────────────────────────────────────────────────────
 io.use((socket, next) => {
   if (socket.handshake.auth.token === MASTER_PIN) return next();
@@ -234,28 +238,11 @@ async function captureGeminiResult() {
     await switchToTab('gemini.google.com');
     await new Promise(r => setTimeout(r, 800));
 
-    // Escribir el JS a un archivo temporal para evitar escaping en AppleScript
-    const jsTmp = `/tmp/gem_capture_${Date.now()}.js`;
-    fs.writeFileSync(jsTmp, `(function(){
-  var s=['message-content','model-response','.model-response-text','p','div'];
-  for(var i=0;i<s.length;i++){
-    var els=document.querySelectorAll(s[i]);
-    if(els.length>0){
-      var t=els[els.length-1].innerText.trim();
-      if(t.length>100)return t.slice(0,3000);
-    }
-  }
-  return document.body.innerText.slice(0,3000);
-})()`, 'utf8');
-
     const result = await runScript(`
-set jsFile to "${jsTmp}"
-set jsCode to read POSIX file jsFile
 tell application "Safari"
-  set r to do JavaScript jsCode in current tab of window 1
+  set r to do JavaScript "document.body.innerText.slice(0,3000)" in current tab of window 1
+  return r
 end tell
-do shell script "rm -f ${jsTmp}"
-return r
     `);
 
     console.log(`[Motor] Gemini capturado: ${(result||'').length} chars`);
