@@ -1,58 +1,77 @@
-# Arquitectura del Proyecto: AI Command Bridge
+BRIDGE_ARCHITECTURE.md — Verdad Absoluta del AI Command Bridge
 
-## 1. Resumen General
+Proyecto: AI Command Bridge (Orquestador de IAs)
+Rol del Sistema: Hub de automatización y control remoto.
+Versión: 3.0.0 (Fase de Inteligencia y Despliegue VPS)
 
-**AI Command Bridge** es una aplicación web diseñada para orquestar comandos a través de una interfaz en tiempo real. Utiliza una arquitectura de microservicios contenerizada con Docker, donde un servidor backend de Node.js gestiona la lógica de negocio y la comunicación WebSocket, mientras que un servidor Nginx actúa como un Reverse Proxy para enrutar el tráfico y habilitar las conexiones WebSocket de forma segura.
+1. REGLAS DE LA FÁBRICA (Operación Agéntica)
 
-## 2. Componentes Principales
+Rol
 
-La arquitectura se divide en tres componentes clave:
+Agente
 
-| Componente          | Tecnología         | Responsabilidad                                                                                             |
-| ------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------- |
-| **Frontend**        | HTML5, JS, CSS     | Proporcionar la interfaz de usuario para enviar comandos y visualizar las actualizaciones de estado en tiempo real. |
-| **Backend (App)**   | Node.js, Express   | Servir la aplicación frontend y gestionar la lógica de negocio principal.                                   |
-| **WebSockets**      | Socket.io          | Facilitar la comunicación bidireccional y en tiempo real entre el cliente y el servidor.                      |
-| **Reverse Proxy**   | Nginx              | Enrutar el tráfico del puerto 80 al servicio de Node.js y gestionar las conexiones WebSocket.               |
-| **Contenerización** | Docker             | Empaquetar y aislar la aplicación y sus dependencias para un despliegue consistente.                        |
+Permisos y Restricciones
 
-## 3. Flujo de Comunicación WebSocket
+Director
 
-El núcleo de la aplicación es la comunicación en tiempo real, que sigue este flujo:
+Humano (Diego)
 
-1.  **Conexión Inicial**: El cliente (navegador) establece una conexión WebSocket con el servidor a través de Nginx.
-2.  **Envío de Comando**: El usuario escribe un comando en el frontend y lo envía. El cliente emite un evento `client:send_command` al servidor con los datos del comando.
-3.  **Procesamiento en Backend**: El servidor `server.js` recibe el evento y comienza un proceso simulado de 3 pasos:
-    *   Paso 1: "Analizando con Gemini..."
-    *   Paso 2: "Inyectando en Manus..."
-    *   Paso 3: "Desplegando..."
-4.  **Actualizaciones de Estado**: En cada paso del proceso, el servidor emite un evento `server:status_update` al cliente. Este evento contiene el estado actual, el número de paso y un mensaje descriptivo.
-5.  **Visualización en Frontend**: El cliente recibe los eventos `server:status_update` y actualiza dinámicamente la interfaz para mostrar el progreso al usuario.
+Aprueba y ejecuta despliegues.
 
-## 4. Infraestructura Docker
+Arquitecto
 
-La aplicación está completamente contenerizada para garantizar la portabilidad y la facilidad de despliegue.
+Gemini Pro
 
-### `Dockerfile`
+Diseña arquitectura y prompts. No escribe código final.
 
-El servicio de la aplicación Node.js se construye a partir de una imagen ligera (`node:20-alpine`) para optimizar el tamaño y la seguridad. El proceso de construcción está optimizado para aprovechar la caché de Docker, copiando primero `package.json` e instalando las dependencias antes de añadir el resto del código fuente.
+Motor
 
-### `nginx/default.conf`
+Manus AI
 
-Nginx está configurado como un Reverse Proxy. Escucha en el puerto 80 y redirige todo el tráfico al contenedor de la aplicación Node.js (`app:3000`).
+Escribe código base.
 
-La configuración incluye directivas **críticas** para asegurar el correcto funcionamiento de los WebSockets a través del proxy:
+Inspector
 
-```nginx
-proxy_set_header Upgrade $http_upgrade;
-proxy_set_header Connection "upgrade";
-```
+Claude Code
 
-### `docker-compose.yml`
+Revisa código local, hace push a Git y corrige bugs.
 
-Este archivo orquesta el levantamiento de toda la pila de servicios:
+2. ARQUITECTURA DESACOPLADA (Estatus: FUNCIONAL)
 
-*   **Servicio `app`**: Construye y ejecuta la aplicación Node.js.
-*   **Servicio `nginx`**: Ejecuta el contenedor de Nginx, mapeando el puerto 80 del host al puerto 80 del contenedor y montando el archivo de configuración de Nginx.
+COMPONENTE A: El Panel de Control (Frontend en VPS Ionos)
 
-Ambos servicios se comunican a través de una red interna de Docker (`bridge-network`), asegurando que el backend solo sea accesible a través del Reverse Proxy de Nginx.
+Estado: Listo para despliegue.
+
+Misión: Interfaz visual para el Director. Requiere CAPA DE SEGURIDAD (Login).
+
+COMPONENTE B: El Motor de Ejecución (Backend en MacBook)
+
+Estado: Funcional (Nativo).
+
+Misión: Ejecutar comandos de terminal. Requiere integración con Manus y Claude.
+
+3. PRÓXIMOS PASOS (FASE 3: INTELIGENCIA Y SEGURIDAD)
+
+3.1 Blindaje de Acceso (Seguridad)
+
+No podemos subir el panel al VPS sin protección. Cualquier persona con la URL podría abrir apps en tu Mac.
+
+Implementación: Agregar una pantalla de "Código de Acceso" (PIN) en la PWA antes de conectar el Socket.
+
+3.2 El "Modo Fábrica" (Orquestación Real)
+
+Pasar de abrir la calculadora a poner a trabajar a los agentes. Programaremos comandos como:
+
+/manus "idea": Abre Safari, entra a Manus y pega el prompt.
+
+/claude "tarea": Ejecuta Claude Code en la terminal de la carpeta del CRM.
+
+/status: Captura de pantalla de la Mac y envío al celular para ver qué está pasando.
+
+3.3 Despliegue Final en VPS
+
+Mover la carpeta frontend_vps a Ionos mediante Docker para que el panel sea permanente y profesional (ej. bridge.iamet.mx).
+
+4. CONVENCIONES DE SEGURIDAD (CORS & AUTH)
+
+El backend en la Mac solo responderá si el mensaje de Socket incluye un auth_token válido generado tras el login en el frontend.
