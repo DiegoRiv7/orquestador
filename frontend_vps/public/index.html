@@ -580,24 +580,22 @@ function connectWithPin(pin) {
 
     // ── Factory events ────────────────────────────────────
     socket.on('fab:state', ({ state, message, data }) => {
+        let step = 'init';
         try {
-            // Debug visible: actualizar titulo y dot inmediatamente
-            document.title = state;
-            hStage.textContent = state;
-
-            laMsg.textContent = message || state;
-            setHeaderState(['gemini_working','manus_working','claude_working','deploying'].includes(state) ? 'busy' : 'connected');
-
-            removeProgress();
-
-            if (state === S.IDLE && message) {
-                addSysBubble('Sistema', message);
-            }
-
-            renderPanel(state, data);
+            step = 'title'; document.title = state;
+            step = 'hStage'; hStage.textContent = state;
+            step = 'laMsg'; laMsg.textContent = message || state;
+            step = 'setHeader'; setHeaderState(['gemini_working','manus_working','claude_working','deploying'].includes(state) ? 'busy' : 'connected');
+            step = 'removeProgress'; removeProgress();
+            step = 'addSysBubble';
+            if (state === S.IDLE && message) addSysBubble('Sistema', message);
+            step = 'renderPanel'; renderPanel(state, data);
         } catch(err) {
-            panelContent.innerHTML = `<div style="color:var(--red);padding:12px;font-size:0.85rem;">Error JS: ${esc(err.message)}</div>`;
-            console.error('fab:state error:', err);
+            const errDiv = document.createElement('div');
+            errDiv.style.cssText = 'color:#FF453A;padding:12px;font-size:0.85rem;';
+            errDiv.textContent = 'Error en ' + step + ': ' + err.message;
+            panelContent.textContent = '';
+            panelContent.appendChild(errDiv);
         }
     });
 
