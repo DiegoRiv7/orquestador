@@ -395,7 +395,12 @@ function renderPanel(state, data) {
     }
 
     else if (state === S.GEMINI_DONE) {
+        const preview = (data && data.result) ? data.result.slice(0, 600) : '(sin resultado)';
         p.innerHTML = `
+            <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:11px 13px;margin-bottom:10px;max-height:140px;overflow-y:auto;">
+                <div style="font-size:0.72rem;font-weight:700;color:var(--text3);letter-spacing:0.3px;margin-bottom:6px;">GEMINI — RESPUESTA</div>
+                <div style="font-size:0.82rem;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word;">${esc(preview)}${data && data.result && data.result.length > 600 ? '...' : ''}</div>
+            </div>
             <div class="action-grid cols-1" style="margin-bottom:9px;">
                 <button class="ab ab-primary" onclick="sendAction('send_manus')">Enviar a Manus →</button>
             </div>
@@ -406,7 +411,12 @@ function renderPanel(state, data) {
     }
 
     else if (state === S.MANUS_DONE) {
+        const preview = (data && data.result) ? data.result.slice(0, 600) : '(sin resultado)';
         p.innerHTML = `
+            <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:11px 13px;margin-bottom:10px;max-height:120px;overflow-y:auto;">
+                <div style="font-size:0.72rem;font-weight:700;color:var(--text3);letter-spacing:0.3px;margin-bottom:6px;">MANUS — RESULTADO</div>
+                <div style="font-size:0.82rem;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word;">${esc(preview)}${data && data.result && data.result.length > 600 ? '...' : ''}</div>
+            </div>
             <div class="action-grid cols-1" style="margin-bottom:9px;">
                 <button class="ab ab-blue" onclick="sendAction('manus_to_claude')">Enviar a Claude Code →</button>
             </div>
@@ -418,9 +428,14 @@ function renderPanel(state, data) {
     }
 
     else if (state === S.CLAUDE_DONE) {
+        const preview = (data && data.result) ? data.result.slice(0, 600) : '(sin resultado)';
         p.innerHTML = `
+            <div style="background:var(--surface2);border:0.5px solid var(--border);border-radius:14px;padding:11px 13px;margin-bottom:10px;max-height:120px;overflow-y:auto;">
+                <div style="font-size:0.72rem;font-weight:700;color:var(--text3);letter-spacing:0.3px;margin-bottom:6px;">CLAUDE — REVISION</div>
+                <div style="font-size:0.82rem;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word;">${esc(preview)}${data && data.result && data.result.length > 600 ? '...' : ''}</div>
+            </div>
             <div class="action-grid cols-1" style="margin-bottom:9px;">
-                <button class="ab ab-primary" onclick="sendAction('deploy')">🚀 Deploy a VPS</button>
+                <button class="ab ab-primary" onclick="sendAction('deploy')">Deploy a VPS</button>
             </div>
             <div class="action-grid cols-2">
                 <button class="ab ab-ghost" onclick="sendAction('retry_claude')">Reintentar Claude</button>
