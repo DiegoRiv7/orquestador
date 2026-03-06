@@ -403,6 +403,7 @@ io.on('connection', (socket) => {
 
   // ── Iniciar con Gemini ────────────────────────────────────────
   socket.on('fab:idea', async ({ text } = {}) => {
+    fab.socket = socket; // Siempre responder al socket que envió
     if (!text?.trim()) return;
     fab.idea = text.trim();
     emitState(S.GEMINI_WORKING, 'Enviando idea a Gemini...');
@@ -415,6 +416,7 @@ io.on('connection', (socket) => {
 
   // ── Acciones del usuario ──────────────────────────────────────
   socket.on('fab:action', async ({ action, text } = {}) => {
+    fab.socket = socket; // Siempre responder al socket que envió
     console.log(`[Motor] Action: ${action}${text ? ' | texto: ' + text.slice(0, 40) : ''}`);
     try {
       switch(action) {
