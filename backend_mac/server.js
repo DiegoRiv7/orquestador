@@ -133,9 +133,9 @@ delay 0.8
   `);
 }
 
-// ─── Enfocar input y pegar texto (sin alterar clipboard del user) ─
+// ─── Enfocar input y pegar texto ────────────────────────────────
 async function focusAndType(urlFragment, text) {
-  // Copiar texto a clipboard via stdin para no bloquear
+  // Copiar texto a clipboard
   await new Promise((resolve, reject) => {
     const proc = spawn('pbcopy');
     proc.stdin.write(text, 'utf8');
@@ -144,19 +144,12 @@ async function focusAndType(urlFragment, text) {
     proc.on('error', reject);
   });
 
-  // Enfocar el campo de texto via JS en Safari
+  // Enfocar el campo via do JavaScript in current tab (funciona sin URL matching)
   try {
-    await runSafariJS(urlFragment, `
-(function() {
-  var candidates = document.querySelectorAll(
-    '[contenteditable="true"], textarea, [role="textbox"], input:not([type="hidden"])'
-  );
-  if (candidates.length > 0) {
-    var el = candidates[candidates.length - 1];
-    el.click();
-    el.focus();
-  }
-})();
+    await runScript(`
+tell application "Safari"
+  do JavaScript "(function(){var els=document.querySelectorAll('[contenteditable=\\"true\\"],textarea,[role=\\"textbox\\"]');if(els.length){var el=els[els.length-1];el.click();el.focus();}})()" in current tab of window 1
+end tell
     `);
   } catch(e) { /* continuar aunque falle */ }
 
@@ -240,7 +233,7 @@ async function captureGeminiResult() {
 
     const result = await runScript(`
 tell application "Safari"
-  set r to do JavaScript "document.body.innerText.slice(0,4000)" in current tab of window 1
+  set r to do JavaScript "(function(){var s=['message-content','model-response','.model-response-text','[data-message-author-role=model]'];for(var i=0;i<s.length;i++){var els=document.querySelectorAll(s[i]);if(els.length){var t=els[els.length-1].innerText.trim();if(t.length>100)return t.slice(0,4000);}}return document.body.innerText.slice(0,4000);})()" in current tab of window 1
   return r
 end tell
     `);
@@ -433,6 +426,13 @@ io.on('connection', (socket) => {
         case 'send_manus':
           emitState(S.MANUS_WORKING, 'Enviando a Manus...');
           await injectManus(fab.geminiResult || fab.idea);
+          break;
+
+        case 'send_manus_custom':
+          if (!text?.trim()) return;
+          fab.geminiResult = text.trim();
+          emitState(S.MANUS_WORKING, 'Enviando a Manus...');
+          await injectManus(fab.geminiResult);
           break;
 
         case 'send_claude':

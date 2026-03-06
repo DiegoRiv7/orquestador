@@ -442,11 +442,26 @@ function renderPanel(state, data) {
     }
 
     else if (state === S.GEMINI_DONE) {
-        if (data && data.result) p.appendChild(mkPreview('GEMINI - RESPUESTA', data.result));
-        p.appendChild(mkGrid(1, [mkBtn('ab ab-primary', 'Enviar a Manus', () => sendAction('send_manus'))]));
+        // Mostrar respuesta como bubble en el chat
+        if (data && data.result) {
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble bubble-sys';
+            const lbl = document.createElement('strong');
+            lbl.textContent = 'Gemini';
+            bubble.appendChild(lbl);
+            bubble.appendChild(document.createTextNode(data.result.slice(0, 1200)));
+            chat.appendChild(bubble);
+            scrollBottom();
+        }
+        // Panel: editar y decidir
+        p.appendChild(mkGrid(1, [mkBtn('ab ab-primary', 'Enviar a Manus', () => {
+            const txt = data && data.result ? data.result : '';
+            openOverlay('Editar antes de enviar a Manus', 'Puedes editar el prompt...', 'send_manus_custom');
+            setTimeout(() => { document.getElementById('overlayText').value = txt.slice(0, 800); }, 50);
+        })]));
         p.appendChild(mkGrid(2, [
-            mkBtn('ab ab-ghost', 'Refinar', () => openOverlay('Refinar con Gemini', 'Ajuste al prompt', 'refine_gemini')),
-            mkBtn('ab ab-ghost', 'Personalizar', () => openOverlay('Mensaje a Gemini', 'Instruccion directa', 'custom_gemini'))
+            mkBtn('ab ab-ghost', 'Refinar', () => openOverlay('Refinar con Gemini', 'Que ajuste necesita?', 'refine_gemini')),
+            mkBtn('ab ab-ghost', 'Otro mensaje', () => openOverlay('Nuevo mensaje a Gemini', 'Escribe tu instruccion', 'custom_gemini'))
         ]));
     }
 
