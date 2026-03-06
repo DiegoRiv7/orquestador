@@ -90,15 +90,17 @@ function runSafariJS(urlFragment, jsCode) {
 set jsFile to "${jsTmp}"
 set jsCode to read POSIX file jsFile
 tell application "Safari"
-  tell window 1
-    repeat with t in tabs
-      if URL of t contains "${urlFragment}" then
-        set result to do JavaScript jsCode in t
-        do shell script "rm -f " & quoted form of jsFile
-        return result
-      end if
-    end repeat
-  end tell
+  repeat with w in windows
+    try
+      repeat with t in tabs of w
+        if URL of t contains "${urlFragment}" then
+          set result to do JavaScript jsCode in t
+          do shell script "rm -f " & quoted form of jsFile
+          return result
+        end if
+      end repeat
+    end try
+  end repeat
 end tell
 do shell script "rm -f " & quoted form of jsFile
 return ""
