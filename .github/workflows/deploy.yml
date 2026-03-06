@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
 
+  # Trigger manual con opción de asignar dominio
+  workflow_dispatch:
+    inputs:
+      bridge_domain:
+        description: 'Subdominio para el panel — ej: bridge.iamet.mx (dejar vacío para omitir)'
+        required: false
+        default: ''
+
 jobs:
   deploy:
     name: SSH Deploy → VPS
@@ -12,24 +20,68 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          # Prioridad: input manual > secret BRIDGE_DOMAIN > vacío
+          BRIDGE_DOMAIN: ${{ github.event.inputs.bridge_domain || secrets.BRIDGE_DOMAIN || '' }}
+          CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL || 'admin@iamet.mx' }}
         with:
           host:     ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key:      ${{ secrets.VPS_SSH_KEY }}
           port:     ${{ secrets.VPS_PORT }}
+          envs:     BRIDGE_DOMAIN,CERTBOT_EMAIL
           script: |
             set -e
 
-            # ── Clonar si es el primer deploy, o pull si ya existe ──
+            # ── 1. Actualizar código ──────────────────────────────────
             if [ ! -d "$HOME/orquestador/.git" ]; then
               git clone https://github.com/DiegoRiv7/orquestador.git $HOME/orquestador
             else
               cd $HOME/orquestador && git pull origin main
             fi
 
-            # ── Levantar el Panel con Docker Compose ────────────────
+            # ── 2. Levantar contenedor Docker ─────────────────────────
             cd $HOME/orquestador/frontend_vps
             docker compose down --remove-orphans
             docker compose up -d --build
+            echo "✅ Contenedor levantado en puerto 8080"
 
-            echo "✅ Deploy completado: $(date)"
+            # ── 3. Nginx + SSL (solo si se pasó un dominio) ───────────
+            if [ -n "$BRIDGE_DOMAIN" ]; then
+              echo "🌐 Configurando Nginx para $BRIDGE_DOMAIN..."
+
+              sudo tee /etc/nginx/sites-available/bridge > /dev/null <<NGINXCONF
+server {
+    listen 80;
+    server_name $BRIDGE_DOMAIN;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINXCONF
+
+              sudo ln -sf /etc/nginx/sites-available/bridge /etc/nginx/sites-enabled/bridge
+              sudo nginx -t && sudo systemctl reload nginx
+
+              # SSL con Certbot (solo si aún no existe el certificado)
+              if [ ! -d "/etc/letsencrypt/live/$BRIDGE_DOMAIN" ]; then
+                echo "🔒 Generando certificado SSL para $BRIDGE_DOMAIN..."
+                sudo certbot --nginx -d "$BRIDGE_DOMAIN" \
+                  --non-interactive --agree-tos -m "$CERTBOT_EMAIL"
+              else
+                echo "🔒 Certificado SSL ya existe para $BRIDGE_DOMAIN"
+              fi
+
+              echo "✅ Panel disponible en https://$BRIDGE_DOMAIN"
+            else
+              echo "⚠️  Sin dominio configurado — panel accesible solo en red interna :8080"
+              echo "   Para asignar dominio: Actions → Run workflow → ingresar subdominio"
+            fi
+
+            echo "🚀 Deploy completado: $(date)"
