@@ -238,22 +238,11 @@ async function captureGeminiResult() {
     await switchToTab('gemini.google.com');
     await new Promise(r => setTimeout(r, 800));
 
-    // Seleccionar todo el texto de la página y copiarlo al clipboard
-    await runScript(`
-tell application "System Events"
-  tell process "Safari"
-    keystroke "a" using command down
-    delay 0.3
-    keystroke "c" using command down
-    delay 0.5
-  end tell
-end tell
-    `);
-
+    // Leer directo del clipboard — el usuario debe copiar la respuesta de Gemini antes
     const result = await new Promise((resolve, reject) => {
       exec('pbpaste', { timeout: 5000 }, (err, stdout) => {
         if (err) reject(err);
-        else resolve(stdout.slice(0, 3000));
+        else resolve((stdout || '').slice(0, 4000));
       });
     });
 

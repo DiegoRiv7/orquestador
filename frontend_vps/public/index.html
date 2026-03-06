@@ -389,7 +389,8 @@ function renderPanel(state, data) {
                 <div class="spinner" style="width:28px;height:28px;border-width:3px;"></div>
                 <div class="working-label">${labels[state]}</div>
                 <div class="working-sublabel">${sublabels[state]}</div>
-                ${captureAction ? `<button class="ab ab-orange" style="margin-top:4px;" onclick="sendAction('${captureAction}')">Ya terminó — Capturar ahora</button>` : ''}
+                ${captureAction === 'capture_gemini' ? `<button class="ab ab-orange" style="margin-top:4px;" onclick="sendAction('${captureAction}')">📋 Copié la respuesta — Capturar</button>` : ''}
+                ${captureAction === 'capture_manus' ? `<button class="ab ab-orange" style="margin-top:4px;" onclick="sendAction('${captureAction}')">📋 Copié el resultado — Capturar</button>` : ''}
                 <button class="btn-cancel" onclick="sendAction('cancel')">Cancelar</button>
             </div>`;
     }
