@@ -1,18 +1,11 @@
-FROM node:20-alpine
+FROM nginx:alpine
 
-WORKDIR /app
+# Copiar el panel estático al directorio web de Nginx
+COPY public/ /usr/share/nginx/html/
 
-# Copiar archivos de dependencias primero para aprovechar la caché de Docker
-COPY package.json ./
+# Copiar configuración de Nginx
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf
 
-# Instalar dependencias de producción
-RUN npm install --omit=dev
+EXPOSE 80
 
-# Copiar el resto del código fuente
-COPY . .
-
-# Exponer el puerto de la aplicación
-EXPOSE 3000
-
-# Comando de arranque
-CMD ["node", "server.js"]
+CMD ["nginx", "-g", "daemon off;"]
