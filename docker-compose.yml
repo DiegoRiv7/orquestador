@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  # ─── Servicio Node.js (Express + Socket.io) ──────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-command-bridge-app
+    restart: unless-stopped
+    expose:
+      - "3000"
+    networks:
+      - bridge-network
+
+  # ─── Servicio Nginx (Reverse Proxy) ──────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: ai-command-bridge-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    networks:
+      - bridge-network
+
+networks:
+  bridge-network:
+    driver: bridge

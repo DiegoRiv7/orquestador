@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Command Bridge</title>
+  <style>
+    /* ─── Estilos base (placeholder para diseño visual futuro) ─── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #0a0a0a;
+      color: #e0e0e0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    #app {
+      text-align: center;
+      max-width: 600px;
+      width: 100%;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      margin-bottom: 1.5rem;
+      color: #ffffff;
+    }
+
+    #command-input {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      font-size: 1rem;
+      border: 1px solid #333;
+      border-radius: 8px;
+      background-color: #1a1a1a;
+      color: #e0e0e0;
+      outline: none;
+      margin-bottom: 1rem;
+    }
+
+    #command-input:focus {
+      border-color: #4a9eff;
+    }
+
+    #send-btn {
+      padding: 0.75rem 2rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      background-color: #4a9eff;
+      color: #ffffff;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    #send-btn:hover {
+      background-color: #3a8eef;
+    }
+
+    #send-btn:disabled {
+      background-color: #333;
+      cursor: not-allowed;
+    }
+
+    #status-log {
+      margin-top: 2rem;
+      text-align: left;
+      padding: 1rem;
+      background-color: #111;
+      border-radius: 8px;
+      border: 1px solid #222;
+      min-height: 120px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .log-entry {
+      padding: 0.25rem 0;
+    }
+
+    .log-entry.processing {
+      color: #f0c040;
+    }
+
+    .log-entry.completed {
+      color: #40f080;
+    }
+
+    .log-entry.connected {
+      color: #4a9eff;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="app">
+    <h1>AI Command Bridge</h1>
+
+    <input
+      type="text"
+      id="command-input"
+      placeholder="Escribe un comando..."
+      autocomplete="off"
+    />
+
+    <button id="send-btn">Enviar Comando</button>
+
+    <div id="status-log">
+      <div class="log-entry">Esperando conexión...</div>
+    </div>
+  </div>
+
+  <!-- Cliente Socket.io servido automáticamente por el servidor -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    // ─── Conexión WebSocket ──────────────────────────────────────
+    const socket = io();
+
+    // ─── Referencias DOM ─────────────────────────────────────────
+    const commandInput = document.getElementById('command-input');
+    const sendBtn = document.getElementById('send-btn');
+    const statusLog = document.getElementById('status-log');
+
+    // ─── Utilidad: agregar entrada al log ────────────────────────
+    function addLogEntry(message, className) {
+      const entry = document.createElement('div');
+      entry.classList.add('log-entry');
+      if (className) entry.classList.add(className);
+      entry.textContent = `> ${message}`;
+      statusLog.appendChild(entry);
+      statusLog.scrollTop = statusLog.scrollHeight;
+    }
+
+    // ─── Evento: conexión establecida ────────────────────────────
+    socket.on('connect', () => {
+      statusLog.innerHTML = '';
+      addLogEntry('Conectado al servidor AI Command Bridge.', 'connected');
+    });
+
+    // ─── Evento: actualización de estado del servidor ────────────
+    socket.on('server:status_update', (data) => {
+      const cssClass = data.status === 'completed' ? 'completed' : 'processing';
+      addLogEntry(`[${data.step}/${data.totalSteps}] ${data.message}`, cssClass);
+
+      // Rehabilitar el botón cuando el proceso termine
+      if (data.status === 'completed') {
+        sendBtn.disabled = false;
+      }
+    });
+
+    // ─── Evento: desconexión ─────────────────────────────────────
+    socket.on('disconnect', () => {
+      addLogEntry('Desconectado del servidor.', '');
+    });
+
+    // ─── Acción: enviar comando ──────────────────────────────────
+    function sendCommand() {
+      const command = commandInput.value.trim();
+      if (!command) return;
+
+      socket.emit('client:send_command', { command: command });
+      addLogEntry(`Comando enviado: "${command}"`, '');
+      commandInput.value = '';
+      sendBtn.disabled = true;
+    }
+
+    // ─── Listeners ───────────────────────────────────────────────
+    sendBtn.addEventListener('click', sendCommand);
+
+    commandInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendCommand();
+    });
+  </script>
+
+</body>
+</html>
