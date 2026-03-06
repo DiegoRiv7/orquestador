@@ -221,28 +221,47 @@ function startGeminiMonitor() {
   }, 2000);
 }
 
+let captureLock = false;
+
 async function captureGeminiResult() {
+  if (captureLock) { emitProgress('Captura en curso, espera...'); return; }
+  captureLock = true;
   try {
     if (fab.monitor) { clearInterval(fab.monitor); fab.monitor = null; }
     emitProgress('Ejecutando captura en Gemini...');
 
     // Llevar la ventana de Gemini al frente
     await switchToTab('gemini.google.com');
-    await new Promise(r => setTimeout(r, 700));
+    await new Promise(r => setTimeout(r, 800));
 
-    // Ejecutar JS en la pestaña activa de la ventana frontal (sin buscar por URL)
+    // Escribir el JS a un archivo temporal para evitar escaping en AppleScript
+    const jsTmp = `/tmp/gem_capture_${Date.now()}.js`;
+    fs.writeFileSync(jsTmp, `(function(){
+  var s=['message-content','model-response','.model-response-text','p','div'];
+  for(var i=0;i<s.length;i++){
+    var els=document.querySelectorAll(s[i]);
+    if(els.length>0){
+      var t=els[els.length-1].innerText.trim();
+      if(t.length>100)return t.slice(0,3000);
+    }
+  }
+  return document.body.innerText.slice(0,3000);
+})()`, 'utf8');
+
     const result = await runScript(`
+set jsFile to "${jsTmp}"
+set jsCode to read POSIX file jsFile
 tell application "Safari"
-  set jsCode to "(function(){var s=['message-content','model-response','.model-response-text','[data-message-author-role=\\"model\\"]','p'];for(var i=0;i<s.length;i++){var els=document.querySelectorAll(s[i]);if(els.length>0){var t=els[els.length-1].innerText.trim();if(t.length>50)return t.slice(0,3000);}}return document.body.innerText.slice(0,3000);})()"
-  set result to do JavaScript jsCode in current tab of window 1
-  return result
+  set r to do JavaScript jsCode in current tab of window 1
 end tell
+do shell script "rm -f ${jsTmp}"
+return r
     `);
 
     console.log(`[Motor] Gemini capturado: ${(result||'').length} chars`);
 
     if (!result || result.trim().length < 10) {
-      emitProgress('Captura vacía. Verifica: Safari → Develop → Allow JavaScript from Apple Events');
+      emitProgress('Captura vacía. Safari → Develop → Allow JavaScript from Apple Events');
       return;
     }
 
@@ -251,6 +270,8 @@ end tell
   } catch(e) {
     console.error('[Motor] Error captureGeminiResult:', e.message);
     emitProgress('Error captura: ' + e.message);
+  } finally {
+    captureLock = false;
   }
 }
 
