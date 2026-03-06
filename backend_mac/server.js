@@ -1,85 +1,482 @@
 const express  = require('express');
 const http     = require('http');
 const path     = require('path');
-const { exec } = require('child_process');
+const fs       = require('fs');
+const { exec, spawn } = require('child_process');
 
 // ─── Inicialización ───────────────────────────────────────────────
 const app    = express();
 const server = http.createServer(app);
-
-// CORS abierto: el frontend vive en un VPS distinto
-const io = require('socket.io')(server, {
-  cors: {
-    origin:  '*',
-    methods: ['GET', 'POST']
-  }
+const io     = require('socket.io')(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
 const PORT       = 3000;
-const MASTER_PIN = "1234"; // TODO: mover a variable de entorno (.env)
+const MASTER_PIN = "1234";
 
-// ─── Middleware de autenticación por PIN ─────────────────────────
+// ─── Auth ─────────────────────────────────────────────────────────
 io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  if (token === MASTER_PIN) {
-    return next();
-  }
-  console.warn(`[Motor Mac] Acceso denegado para ${socket.handshake.address} — PIN incorrecto`);
+  if (socket.handshake.auth.token === MASTER_PIN) return next();
+  console.warn(`[Motor] Acceso denegado: ${socket.handshake.address}`);
   return next(new Error("Acceso denegado: PIN incorrecto"));
 });
 
-// ─── Servir el Panel (frontend_vps/public) ────────────────────────
+// ─── Static ───────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '..', 'frontend_vps', 'public')));
 
-// ─── Lógica de WebSockets ────────────────────────────────────────
-io.on('connection', (socket) => {
-  console.log(`[Motor Mac] Cliente conectado: ${socket.id}`);
+// ─── Estados de la Fábrica ────────────────────────────────────────
+const S = {
+  IDLE:           'idle',
+  GEMINI_WORKING: 'gemini_working',
+  GEMINI_DONE:    'gemini_done',
+  MANUS_WORKING:  'manus_working',
+  MANUS_DONE:     'manus_done',
+  CLAUDE_WORKING: 'claude_working',
+  CLAUDE_DONE:    'claude_done',
+  DEPLOYING:      'deploying',
+  DONE:           'done'
+};
 
+// ─── Estado global de la fábrica ──────────────────────────────────
+let fab = {
+  state:        S.IDLE,
+  idea:         '',
+  geminiResult: '',
+  manusResult:  '',
+  claudeResult: '',
+  deployUrl:    '',
+  monitor:      null,
+  socket:       null,
+  customAction: null   // acción pendiente cuando usuario edita texto
+};
+
+function resetFab() {
+  if (fab.monitor) clearInterval(fab.monitor);
+  const sock = fab.socket;
+  fab = { state: S.IDLE, idea: '', geminiResult: '', manusResult: '',
+          claudeResult: '', deployUrl: '', monitor: null, socket: sock, customAction: null };
+}
+
+// ─── Helpers de emisión ───────────────────────────────────────────
+function emitState(state, message, data = {}) {
+  fab.state = state;
+  if (fab.socket) fab.socket.emit('fab:state', { state, message, data });
+  console.log(`[Motor] ▶ ${state} — ${message}`);
+}
+
+function emitProgress(message) {
+  if (fab.socket) fab.socket.emit('fab:progress', { message });
+  console.log(`[Motor] ⏳ ${message}`);
+}
+
+// ─── AppleScript: ejecutar archivo temporal ───────────────────────
+function runScript(content) {
+  return new Promise((resolve, reject) => {
+    const tmp = `/tmp/fab_${Date.now()}_${Math.random().toString(36).slice(2)}.applescript`;
+    fs.writeFileSync(tmp, content, 'utf8');
+    exec(`osascript "${tmp}"`, { timeout: 15000 }, (err, stdout, stderr) => {
+      try { fs.unlinkSync(tmp); } catch(e) {}
+      if (err) reject(new Error(stderr?.trim() || err.message));
+      else resolve(stdout.trim());
+    });
+  });
+}
+
+// ─── AppleScript: ejecutar JS en una pestaña de Safari por URL ────
+function runSafariJS(urlFragment, jsCode) {
+  const jsTmp = `/tmp/fab_js_${Date.now()}.js`;
+  fs.writeFileSync(jsTmp, jsCode, 'utf8');
+  return runScript(`
+set jsFile to "${jsTmp}"
+set jsCode to read POSIX file jsFile
+tell application "Safari"
+  tell window 1
+    repeat with t in tabs
+      if URL of t contains "${urlFragment}" then
+        set result to do JavaScript jsCode in t
+        do shell script "rm -f " & quoted form of jsFile
+        return result
+      end if
+    end repeat
+  end tell
+end tell
+do shell script "rm -f " & quoted form of jsFile
+return ""
+  `);
+}
+
+// ─── Cambiar a pestaña de Safari por URL ─────────────────────────
+async function switchToTab(urlFragment) {
+  await runScript(`
+tell application "Safari"
+  activate
+  tell window 1
+    repeat with t in tabs
+      if URL of t contains "${urlFragment}" then
+        set current tab to t
+        exit repeat
+      end if
+    end repeat
+  end tell
+end tell
+delay 0.6
+  `);
+}
+
+// ─── Enfocar input y pegar texto (sin alterar clipboard del user) ─
+async function focusAndType(urlFragment, text) {
+  // Copiar texto a clipboard via stdin para no bloquear
+  await new Promise((resolve, reject) => {
+    const proc = spawn('pbcopy');
+    proc.stdin.write(text, 'utf8');
+    proc.stdin.end();
+    proc.on('close', resolve);
+    proc.on('error', reject);
+  });
+
+  // Enfocar el campo de texto via JS en Safari
+  try {
+    await runSafariJS(urlFragment, `
+(function() {
+  var candidates = document.querySelectorAll(
+    '[contenteditable="true"], textarea, [role="textbox"], input:not([type="hidden"])'
+  );
+  if (candidates.length > 0) {
+    var el = candidates[candidates.length - 1];
+    el.click();
+    el.focus();
+  }
+})();
+    `);
+  } catch(e) { /* continuar aunque falle */ }
+
+  await new Promise(r => setTimeout(r, 400));
+
+  // Seleccionar todo y pegar
+  await runScript(`
+tell application "System Events"
+  tell process "Safari"
+    keystroke "a" using command down
+    delay 0.2
+    keystroke "v" using command down
+    delay 0.5
+    key code 36
+  end tell
+end tell
+  `);
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  GEMINI
+// ─────────────────────────────────────────────────────────────────
+async function injectGemini(text) {
+  await switchToTab('gemini.google.com');
+  emitProgress('Gemini abierto, enviando prompt...');
+  await focusAndType('gemini.google.com', text);
+  emitProgress('Prompt enviado. Gemini está pensando...');
+  startGeminiMonitor();
+}
+
+function startGeminiMonitor() {
+  let lastLen = 0;
+  let stable  = 0;
+  const NEEDED = 4; // 4 × 2s = 8s estable sin cambios = listo
+
+  if (fab.monitor) clearInterval(fab.monitor);
+
+  fab.monitor = setInterval(async () => {
+    try {
+      const len = await runSafariJS('gemini.google.com', `
+(function() {
+  var sel = ['model-response','[data-message-author-role="model"]',
+             '.response-content','message-content','.model-response-text'];
+  for (var i = 0; i < sel.length; i++) {
+    var els = document.querySelectorAll(sel[i]);
+    if (els.length > 0) return els[els.length - 1].innerText.trim().length;
+  }
+  return 0;
+})()
+      `);
+      const cur = parseInt(len) || 0;
+      emitProgress(`Gemini escribiendo... (${cur} caracteres)`);
+
+      if (cur > 80 && cur === lastLen) {
+        stable++;
+        if (stable >= NEEDED) {
+          clearInterval(fab.monitor);
+          fab.monitor = null;
+          await captureGeminiResult();
+        }
+      } else {
+        stable = 0;
+        lastLen = cur;
+      }
+    } catch(e) { /* reintentar */ }
+  }, 2000);
+}
+
+async function captureGeminiResult() {
+  try {
+    const result = await runSafariJS('gemini.google.com', `
+(function() {
+  var sel = ['model-response','[data-message-author-role="model"]',
+             '.response-content','message-content'];
+  for (var i = 0; i < sel.length; i++) {
+    var els = document.querySelectorAll(sel[i]);
+    if (els.length > 0) return els[els.length - 1].innerText.trim();
+  }
+  return document.body.innerText.slice(0, 3000);
+})()
+    `);
+    fab.geminiResult = result;
+    emitState(S.GEMINI_DONE, 'Gemini terminó. Revisa la respuesta y decide el siguiente paso.', { content: result });
+  } catch(e) {
+    emitProgress('Error capturando Gemini: ' + e.message);
+    fab.state = S.IDLE;
+    emitState(S.IDLE, 'Error con Gemini. Intenta de nuevo.');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  MANUS
+// ─────────────────────────────────────────────────────────────────
+async function injectManus(text) {
+  await switchToTab('manus.im');
+  emitProgress('Manus abierto, enviando prompt...');
+  await focusAndType('manus.im', text);
+  emitProgress('Prompt enviado. Manus construyendo...');
+  startManusMonitor();
+}
+
+function startManusMonitor() {
+  let lastContent = '';
+  let stable      = 0;
+  const NEEDED    = 8; // 8 × 3s = 24s estable = listo (Manus tarda más)
+
+  if (fab.monitor) clearInterval(fab.monitor);
+
+  fab.monitor = setInterval(async () => {
+    try {
+      const content = await runSafariJS('manus.im', `
+(function() {
+  var done = document.querySelectorAll('[class*="complete"],[class*="finished"],[class*="success"],[class*="done"]');
+  if (done.length) return 'DONE:' + done[0].innerText.trim().slice(0, 150);
+  var act = document.querySelectorAll('[class*="agent"],[class*="task"],[class*="step"],[class*="action"],[class*="progress"],[class*="message"]');
+  if (act.length) return act[act.length - 1].innerText.trim().slice(0, 200);
+  return document.title;
+})()
+      `);
+
+      emitProgress(`Manus: ${content.slice(0, 60)}...`);
+
+      if (content.startsWith('DONE:')) {
+        clearInterval(fab.monitor); fab.monitor = null;
+        fab.manusResult = content.replace('DONE:', '');
+        emitState(S.MANUS_DONE, 'Manus completó la tarea. ¿Qué hacemos ahora?', { content: fab.manusResult });
+        return;
+      }
+
+      if (content.length > 10 && content === lastContent) {
+        stable++;
+        if (stable >= NEEDED) {
+          clearInterval(fab.monitor); fab.monitor = null;
+          fab.manusResult = content;
+          emitState(S.MANUS_DONE, 'Manus completó la tarea. ¿Qué hacemos ahora?', { content });
+        }
+      } else {
+        stable = 0;
+        lastContent = content;
+      }
+    } catch(e) { /* reintentar */ }
+  }, 3000);
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  CLAUDE
+// ─────────────────────────────────────────────────────────────────
+async function injectClaude(instructions) {
+  const instrFile = `/tmp/claude_task_${Date.now()}.md`;
+  fs.writeFileSync(instrFile, instructions, 'utf8');
+
+  // Abrir nueva ventana de Terminal con claude
+  await runScript(`
+tell application "Terminal"
+  activate
+  set newWin to do script "echo '\\n━━━ INSTRUCCIONES PARA CLAUDE ━━━' && cat \\"${instrFile}\\" && echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' && claude"
+  set bounds of front window to {50, 50, 1200, 800}
+end tell
+  `);
+
+  emitProgress('Claude abierto. Procesando instrucciones...');
+  startClaudeMonitor();
+}
+
+function startClaudeMonitor() {
+  let checks = 0;
+  if (fab.monitor) clearInterval(fab.monitor);
+
+  fab.monitor = setInterval(async () => {
+    checks++;
+    emitProgress(`Claude trabajando... (${checks * 3}s)`);
+
+    try {
+      const content = await runScript(`
+tell application "Terminal"
+  get contents of selected tab of front window
+end tell
+      `);
+      const lines   = content.split('\n');
+      const lastLine = (lines[lines.length - 1] || lines[lines.length - 2] || '').trim();
+      const isDone   = lastLine.endsWith('%') || lastLine.endsWith('$') || lastLine.endsWith('❯');
+
+      if (checks > 5 && isDone) {
+        clearInterval(fab.monitor); fab.monitor = null;
+        fab.claudeResult = content.slice(-1500);
+        emitState(S.CLAUDE_DONE, 'Claude terminó. ¿Desplegamos?', { content: fab.claudeResult });
+      }
+    } catch(e) { /* reintentar */ }
+  }, 3000);
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  DEPLOY
+// ─────────────────────────────────────────────────────────────────
+function runDeploy() {
+  emitState(S.DEPLOYING, 'Iniciando deploy automático...');
+  exec(
+    'cd ~/orquestador && git add -A && git commit -m "fab: deploy automático desde la fábrica IA" && git push origin main',
+    (err, stdout, stderr) => {
+      if (err) {
+        emitProgress('Error en deploy: ' + (stderr || err.message));
+        emitState(S.CLAUDE_DONE, 'Deploy falló. Intenta de nuevo.', { content: fab.claudeResult });
+        return;
+      }
+      fab.deployUrl = 'http://82.223.44.29';
+      emitState(S.DONE, '🚀 Deploy completado', { url: fab.deployUrl });
+    }
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  SOCKET.IO
+// ─────────────────────────────────────────────────────────────────
+io.on('connection', (socket) => {
+  console.log(`[Motor Mac] ✅ Cliente conectado: ${socket.id}`);
+  fab.socket = socket;
+
+  // Sincronizar estado actual al conectar
+  socket.emit('fab:state', { state: fab.state, message: 'Motor conectado. Listo para trabajar.', data: {} });
+
+  // ── Iniciar con Gemini ────────────────────────────────────────
+  socket.on('fab:idea', async ({ text } = {}) => {
+    if (!text?.trim()) return;
+    fab.idea = text.trim();
+    emitState(S.GEMINI_WORKING, 'Enviando idea a Gemini...');
+    try { await injectGemini(fab.idea); }
+    catch(e) {
+      emitProgress('Error Gemini: ' + e.message);
+      emitState(S.IDLE, 'Error. Intenta de nuevo.');
+    }
+  });
+
+  // ── Acciones del usuario ──────────────────────────────────────
+  socket.on('fab:action', async ({ action, text } = {}) => {
+    console.log(`[Motor] Action: ${action}${text ? ' | texto: ' + text.slice(0, 40) : ''}`);
+    try {
+      switch(action) {
+
+        // ── Desde GEMINI_DONE ────────────────────────────────────
+        case 'send_manus':
+          emitState(S.MANUS_WORKING, 'Enviando a Manus...');
+          await injectManus(fab.geminiResult || fab.idea);
+          break;
+
+        case 'send_claude':
+          emitState(S.CLAUDE_WORKING, 'Enviando a Claude Code...');
+          await injectClaude(fab.geminiResult || fab.idea);
+          break;
+
+        case 'refine_gemini':
+          emitState(S.GEMINI_WORKING, 'Refinando con Gemini...');
+          await injectGemini('Refina y mejora el prompt anterior. Hazlo más específico, técnico y listo para un agente de IA como Manus. Devuelve solo el prompt mejorado.');
+          break;
+
+        case 'custom_gemini':
+          if (!text?.trim()) return;
+          emitState(S.GEMINI_WORKING, 'Enviando a Gemini...');
+          await injectGemini(text.trim());
+          break;
+
+        // ── Desde MANUS_DONE ─────────────────────────────────────
+        case 'manus_to_claude':
+          emitState(S.CLAUDE_WORKING, 'Pasando a Claude Code...');
+          await injectClaude(`Revisa y mejora el siguiente proyecto generado por Manus:\n\n${fab.manusResult}`);
+          break;
+
+        case 'retry_manus':
+          emitState(S.MANUS_WORKING, 'Reintentando con Manus...');
+          await injectManus(fab.geminiResult || fab.idea);
+          break;
+
+        case 'deploy_from_manus':
+          runDeploy();
+          break;
+
+        // ── Desde CLAUDE_DONE ─────────────────────────────────────
+        case 'deploy':
+          runDeploy();
+          break;
+
+        case 'retry_claude':
+          emitState(S.CLAUDE_WORKING, 'Otra ronda con Claude...');
+          await injectClaude('Revisa el trabajo anterior. Mejora la calidad del código, corrige errores y aplica buenas prácticas.');
+          break;
+
+        case 'custom_claude':
+          if (!text?.trim()) return;
+          emitState(S.CLAUDE_WORKING, 'Enviando instrucciones a Claude...');
+          await injectClaude(text.trim());
+          break;
+
+        // ── Desde DONE ───────────────────────────────────────────
+        case 'new_project':
+          resetFab();
+          emitState(S.IDLE, '✨ Fábrica lista para un nuevo proyecto.');
+          break;
+
+        // ── Global ───────────────────────────────────────────────
+        case 'cancel':
+          if (fab.monitor) { clearInterval(fab.monitor); fab.monitor = null; }
+          emitState(S.IDLE, 'Proceso cancelado.');
+          break;
+      }
+    } catch(e) {
+      emitProgress('❌ Error: ' + e.message);
+      console.error('[Motor] Error:', e);
+    }
+  });
+
+  // ── Comandos heredados ────────────────────────────────────────
   socket.on('client:send_command', (data) => {
     const command  = data?.command || '';
     const cmdLower = command.toLowerCase();
-
-    console.log(`[Motor Mac] Comando de ${socket.id}: "${command}"`);
-
-    // Paso 1: acuse de recibo inmediato
-    socket.emit('server:status_update', {
-      step:       1,
-      totalSteps: 2,
-      status:     'processing',
-      message:    'Procesando comando: ' + command
-    });
-
-    // Decidir qué ejecutar en el Mac
+    socket.emit('server:status_update', { step: 1, totalSteps: 2, status: 'processing', message: 'Procesando: ' + command });
     let shellCmd;
-    if (cmdLower.includes('safari')) {
-      shellCmd = 'open -a Safari';
-    } else if (cmdLower.includes('calculadora')) {
-      shellCmd = 'open -a Calculator';
-    } else {
-      // Sanitizar: eliminar metacaracteres de shell para evitar inyección
-      const safe = command.replace(/[`$\\;"'|&<>(){}!\n\r]/g, '');
-      shellCmd = `echo "Comando recibido: ${safe}"`;
-    }
-
-    // Ejecutar y devolver resultado
-    exec(shellCmd, (error, stdout, stderr) => {
-      const output = stdout || stderr || (error ? error.message : 'OK');
-      socket.emit('server:status_update', {
-        step:       2,
-        totalSteps: 2,
-        status:     'completed',
-        message:    `Tarea finalizada. Output: ${output.trim() || 'OK'}`
-      });
-      console.log(`[Motor Mac] [${socket.id}] Completado — ${output.trim() || 'OK'}`);
+    if      (cmdLower.includes('safari'))      shellCmd = 'open -a Safari';
+    else if (cmdLower.includes('calculadora')) shellCmd = 'open -a Calculator';
+    else { const safe = command.replace(/[`$\\;"'|&<>(){}!\n\r]/g, ''); shellCmd = `echo "${safe}"`; }
+    exec(shellCmd, (err, stdout) => {
+      socket.emit('server:status_update', { step: 2, totalSteps: 2, status: 'completed', message: stdout.trim() || 'OK' });
     });
   });
 
   socket.on('disconnect', () => {
-    console.log(`[Motor Mac] Cliente desconectado: ${socket.id}`);
+    console.log(`[Motor Mac] ❌ Cliente desconectado: ${socket.id}`);
   });
 });
 
-// ─── Arrancar el motor ───────────────────────────────────────────
 server.listen(PORT, () => {
-  console.log(`[Motor Mac] Activo en http://localhost:${PORT}`);
+  console.log(`\n[Motor Mac] 🚀 Activo en http://localhost:${PORT}`);
+  console.log(`[Motor Mac] 🔐 PIN requerido para conectar`);
+  console.log(`[Motor Mac] 🤖 Esperando instrucciones desde el teléfono...\n`);
 });
