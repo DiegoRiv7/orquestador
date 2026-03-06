@@ -544,29 +544,25 @@ function connectWithPin(pin) {
 
     // ── Factory events ────────────────────────────────────
     socket.on('fab:state', ({ state, message, data }) => {
-        laMsg.textContent = message || state;
-        setHeaderState(['gemini_working','manus_working','claude_working','deploying'].includes(state) ? 'busy' : 'connected');
+        try {
+            // Debug visible: actualizar titulo y dot inmediatamente
+            document.title = state;
+            hStage.textContent = state;
 
-        removeProgress();
+            laMsg.textContent = message || state;
+            setHeaderState(['gemini_working','manus_working','claude_working','deploying'].includes(state) ? 'busy' : 'connected');
 
-        if (state === S.GEMINI_DONE && data && data.result) {
-            addResultCard('gemini', 'GEMINI — Prompt refinado', data.result);
-        }
-        if (state === S.MANUS_DONE && data && data.result) {
-            addResultCard('manus', 'MANUS — Proyecto construido', data.result);
-        }
-        if (state === S.CLAUDE_DONE && data && data.result) {
-            addResultCard('claude', 'CLAUDE CODE — Revisión completada', data.result);
-        }
-        if (state === S.DONE) {
-            if (data && data.url) addDeployCard(data.url);
-            else addSysBubble('Deploy', message || 'Proceso completado.');
-        }
-        if (state === S.IDLE && message) {
-            addSysBubble('Sistema', message);
-        }
+            removeProgress();
 
-        renderPanel(state, data);
+            if (state === S.IDLE && message) {
+                addSysBubble('Sistema', message);
+            }
+
+            renderPanel(state, data);
+        } catch(err) {
+            panelContent.innerHTML = `<div style="color:var(--red);padding:12px;font-size:0.85rem;">Error JS: ${esc(err.message)}</div>`;
+            console.error('fab:state error:', err);
+        }
     });
 
     socket.on('fab:progress', ({ message }) => {
