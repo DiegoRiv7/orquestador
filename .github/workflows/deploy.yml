@@ -36,9 +36,11 @@ jobs:
             # ── 1. Actualizar código ──────────────────────────────────
             if [ ! -d "$HOME/orquestador/.git" ]; then
               git clone https://github.com/DiegoRiv7/orquestador.git $HOME/orquestador
-            else
-              cd $HOME/orquestador && git pull origin main
             fi
+            cd $HOME/orquestador
+            git fetch origin main
+            git reset --hard origin/main
+            echo "📦 Commit activo: $(git log --oneline -1)"
 
             # ── 2. Levantar contenedor Docker ─────────────────────────
             cd $HOME/orquestador/frontend_vps
