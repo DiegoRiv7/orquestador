@@ -564,6 +564,9 @@ function validatePIN() {
     connectWithPin(pin);
 }
 
+// Mostrar panel IDLE de inmediato para que la UI no quede vacía
+renderPanel(S.IDLE);
+
 const savedPin = sessionStorage.getItem('bridge_pin');
 if (savedPin) {
     connectWithPin(savedPin);
