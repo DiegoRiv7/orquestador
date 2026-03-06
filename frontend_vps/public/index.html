@@ -382,12 +382,14 @@ function renderPanel(state, data) {
     else if (state === S.GEMINI_WORKING || state === S.MANUS_WORKING || state === S.CLAUDE_WORKING || state === S.DEPLOYING) {
         const labels = { gemini_working:'Refinando idea con Gemini', manus_working:'Manus construyendo el proyecto', claude_working:'Claude Code revisando y corrigiendo', deploying:'Empujando a GitHub y desplegando' };
         const sublabels = { gemini_working:'Monitoreando respuesta automáticamente', manus_working:'Esto puede tardar varios minutos', claude_working:'Analizando y aplicando mejoras', deploying:'Git push → GitHub Actions → VPS' };
+        const captureAction = state === S.GEMINI_WORKING ? 'capture_gemini' : state === S.MANUS_WORKING ? 'capture_manus' : null;
         setHeaderState('busy');
         p.innerHTML = `
             <div class="working-area">
                 <div class="spinner" style="width:28px;height:28px;border-width:3px;"></div>
                 <div class="working-label">${labels[state]}</div>
                 <div class="working-sublabel">${sublabels[state]}</div>
+                ${captureAction ? `<button class="ab ab-orange" style="margin-top:4px;" onclick="sendAction('${captureAction}')">Ya terminó — Capturar ahora</button>` : ''}
                 <button class="btn-cancel" onclick="sendAction('cancel')">Cancelar</button>
             </div>`;
     }

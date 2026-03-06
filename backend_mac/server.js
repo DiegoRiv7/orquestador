@@ -110,16 +110,20 @@ async function switchToTab(urlFragment) {
   await runScript(`
 tell application "Safari"
   activate
-  tell window 1
-    repeat with t in tabs
+  set found to false
+  repeat with w in windows
+    if found then exit repeat
+    repeat with t in tabs of w
       if URL of t contains "${urlFragment}" then
-        set current tab to t
+        set current tab of w to t
+        set index of w to 1
+        set found to true
         exit repeat
       end if
     end repeat
-  end tell
+  end repeat
 end tell
-delay 0.6
+delay 0.8
   `);
 }
 
@@ -229,7 +233,7 @@ async function captureGeminiResult() {
 })()
     `);
     fab.geminiResult = result;
-    emitState(S.GEMINI_DONE, 'Gemini terminó. Revisa la respuesta y decide el siguiente paso.', { content: result });
+    emitState(S.GEMINI_DONE, 'Gemini terminó. Revisa la respuesta y decide el siguiente paso.', { result });
   } catch(e) {
     emitProgress('Error capturando Gemini: ' + e.message);
     fab.state = S.IDLE;
@@ -272,7 +276,7 @@ function startManusMonitor() {
       if (content.startsWith('DONE:')) {
         clearInterval(fab.monitor); fab.monitor = null;
         fab.manusResult = content.replace('DONE:', '');
-        emitState(S.MANUS_DONE, 'Manus completó la tarea. ¿Qué hacemos ahora?', { content: fab.manusResult });
+        emitState(S.MANUS_DONE, 'Manus completó la tarea. ¿Qué hacemos ahora?', { result: fab.manusResult });
         return;
       }
 
@@ -281,7 +285,7 @@ function startManusMonitor() {
         if (stable >= NEEDED) {
           clearInterval(fab.monitor); fab.monitor = null;
           fab.manusResult = content;
-          emitState(S.MANUS_DONE, 'Manus completó la tarea. ¿Qué hacemos ahora?', { content });
+          emitState(S.MANUS_DONE, 'Manus completó la tarea. ¿Qué hacemos ahora?', { result: content });
         }
       } else {
         stable = 0;
@@ -289,6 +293,23 @@ function startManusMonitor() {
       }
     } catch(e) { /* reintentar */ }
   }, 3000);
+}
+
+async function captureManusResult() {
+  try {
+    if (fab.monitor) { clearInterval(fab.monitor); fab.monitor = null; }
+    const result = await runSafariJS('manus.im', `
+(function() {
+  var els = document.querySelectorAll('[class*="message"],[class*="agent"],[class*="task"],[class*="result"],[class*="output"]');
+  if (els.length) return els[els.length - 1].innerText.trim().slice(0, 3000);
+  return document.body.innerText.slice(0, 3000);
+})()
+    `);
+    fab.manusResult = result;
+    emitState(S.MANUS_DONE, 'Manus completó la tarea. ¿Qué hacemos ahora?', { result });
+  } catch(e) {
+    emitProgress('Error capturando Manus: ' + e.message);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -442,6 +463,17 @@ io.on('connection', (socket) => {
         case 'new_project':
           resetFab();
           emitState(S.IDLE, '✨ Fábrica lista para un nuevo proyecto.');
+          break;
+
+        // ── Captura manual (cuando auto-detect no funciona) ──────
+        case 'capture_gemini':
+          emitProgress('Capturando respuesta de Gemini...');
+          await captureGeminiResult();
+          break;
+
+        case 'capture_manus':
+          emitProgress('Capturando respuesta de Manus...');
+          await captureManusResult();
           break;
 
         // ── Global ───────────────────────────────────────────────
