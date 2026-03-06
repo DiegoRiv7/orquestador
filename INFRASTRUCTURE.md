@@ -1,4 +1,4 @@
-# Infraestructura — AI Command Bridge
+# Infraestructura — VPS Ionos + GitHub Actions
 
 ## Arquitectura general
 
@@ -6,67 +6,170 @@
 [Browser / Móvil]
        │
        ▼
-[VPS Ionos — Ubuntu]          [Mac Local]
-  Nginx :80/:443               Node.js :3000
-  Docker: panel :8080    ◄──── Cloudflare Tunnel
-  (HTML estático)              backend_mac/server.js
+[VPS Ionos — Ubuntu 82.223.44.29]
+  Nginx :80/:443  ← único punto de entrada externo
+       │
+       ├── 82.223.44.29      → :8080  (proyecto en pruebas — rotativo)
+       ├── iamet.mx          → :3001
+       ├── cableado.iamet.mx → :3003
+       ├── crm.iamet.mx      → :8007
+       └── nethive.mx        → :8000
 ```
 
 ---
 
-## Servicios en el VPS
+## Regla de oro del VPS
 
-| Contenedor | Puerto interno | Puerto externo | Descripción |
+> Ionos **solo expone el puerto 80 y 443** al exterior.
+> Todas las apps corren en puertos internos y Nginx las enruta por dominio o IP.
+> **Nunca abrir puertos directos** — todo pasa por Nginx.
+
+---
+
+## Flujo de vida de un proyecto
+
+```
+1. DESARROLLO
+   └── Pruebas locales en el Mac
+
+2. DEPLOY A VPS (sin dominio)
+   └── Push a main → GitHub Actions → Docker en puerto interno
+   └── Nginx expone el proyecto en http://82.223.44.29 (IP directa)
+   └── Verificas que funciona desde el celular/navegador
+
+3. PRODUCCIÓN (con dominio)
+   └── Creas registro A en Newbox → subdominio.iamet.mx → 82.223.44.29
+   └── Actions → Run workflow → ingresas el subdominio
+   └── GitHub genera Nginx config + certificado SSL automáticamente
+   └── App disponible en https://subdominio.iamet.mx
+```
+
+---
+
+## Servicios activos en el VPS
+
+| Contenedor | Puerto interno | Nginx expone en | Estado |
 |---|---|---|---|
-| `ai-command-bridge-panel` | 80 | 8080 | Panel HTML estático (Nginx) |
-| `iamet-website` | 3000 | 3001 | iamet.mx |
-| `iamet-cableado` | 3000 | 3003 | cableado.iamet.mx |
-| `crm-iamet-web-1` | 8000 | 8007 | crm.iamet.mx |
-| `gesti-n-de-ventas-web-1` | 8000 | 8000 | nethive.mx |
-| `gesti-n-de-ventas-db-1` | 3306 | 3306 | MySQL |
+| `ai-command-bridge-panel` | 8080 | `82.223.44.29` (pruebas) | ✅ Activo |
+| `iamet-website` | 3001 | `iamet.mx` | ✅ Activo |
+| `iamet-cableado` | 3003 | `cableado.iamet.mx` | ✅ Activo |
+| `crm-iamet-web-1` | 8007 | `crm.iamet.mx` | ✅ Activo |
+| `gesti-n-de-ventas-web-1` | 8000 | `nethive.mx` | ✅ Activo |
+| `gesti-n-de-ventas-db-1` | 3306 | interno | ✅ Activo |
 
-## Nginx (sistema host)
+### Puertos internos disponibles para nuevos proyectos
+`8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090`
 
-| Config | Dominio | Proxy a |
+---
+
+## Nginx configs en el VPS
+
+| Archivo | server_name | Proxy a |
 |---|---|---|
+| `nethive` | nethive.mx, www.nethive.mx | :8000 |
 | `iamet.mx` | iamet.mx, www.iamet.mx | :3001 |
 | `cableado.iamet.mx.conf` | cableado.iamet.mx | :3003 |
 | `crm.iamet.mx` | crm.iamet.mx | :8007 |
-| `nethive` | nethive.mx, www.nethive.mx, IP | :8000 |
-| `bridge` *(auto-generado)* | subdominio asignado | :8080 |
+| `bridge` | 82.223.44.29 *(rotativo)* | :8080 |
+
+> **Nota:** El config `bridge` con `server_name 82.223.44.29` es rotativo.
+> Cada proyecto nuevo en pruebas reemplaza ese config apuntando a su puerto.
+> Cuando se asigna dominio definitivo, `server_name` se cambia al subdominio.
 
 ---
 
-## Motor Mac (backend_mac/)
+## Archivos requeridos en cada proyecto nuevo
 
-| Archivo | Descripción |
-|---|---|
-| `server.js` | Servidor Node.js + Socket.io con autenticación PIN |
-| `package.json` | Dependencias: express, socket.io, cors |
+Para que GitHub Actions haga el deploy correctamente, cada proyecto debe tener esta estructura mínima:
 
-**Arrancar el motor:**
-```bash
-cd backend_mac
-node server.js
-# Puerto: 3000
+```
+mi-proyecto/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml          ← CI/CD (copiar y adaptar de este repo)
+│
+├── frontend_vps/               ← Lo que se despliega en el VPS
+│   ├── Dockerfile              ← OBLIGATORIO
+│   ├── docker-compose.yml      ← OBLIGATORIO
+│   ├── nginx/
+│   │   └── default.conf        ← Config interna del contenedor Nginx
+│   └── public/
+│       └── index.html          ← App estática (o build del framework)
+│
+└── backend_mac/                ← Motor local (si aplica)
+    ├── server.js
+    └── package.json
 ```
 
-**Exponer con Cloudflare Tunnel:**
-```bash
-npx cloudflared tunnel --url http://localhost:3000
-# Copiar la URL generada y actualizar MAC_HUB_URL en public/index.html
+### Dockerfile mínimo (app estática)
+```dockerfile
+FROM nginx:alpine
+COPY public/ /usr/share/nginx/html/
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
 ```
 
----
+### docker-compose.yml mínimo
+```yaml
+version: "3.8"
+services:
+  panel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nombre-del-proyecto
+    restart: unless-stopped
+    ports:
+      - "PUERTO_INTERNO:80"   # ej: 8081:80, 8082:80, etc.
+```
 
-## Panel VPS (frontend_vps/)
+### nginx/default.conf mínimo
+```nginx
+server {
+    listen 80;
+    server_name localhost;
+    root /usr/share/nginx/html;
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
 
-| Archivo | Descripción |
-|---|---|
-| `Dockerfile` | nginx:alpine + copia public/ |
-| `docker-compose.yml` | Servicio `panel` en puerto 8080 |
-| `nginx/default.conf` | Sirve archivos estáticos |
-| `public/index.html` | UI del chat + lógica Socket.io |
+### deploy.yml — pasos que debe incluir
+```yaml
+script: |
+  # 1. Clonar o actualizar el repo
+  if [ ! -d "$HOME/mi-proyecto/.git" ]; then
+    git clone https://github.com/DiegoRiv7/mi-proyecto.git $HOME/mi-proyecto
+  else
+    cd $HOME/mi-proyecto && git pull origin main
+  fi
+
+  # 2. Levantar contenedor
+  cd $HOME/mi-proyecto/frontend_vps
+  docker compose down --remove-orphans
+  docker compose up -d --build
+
+  # 3. Actualizar Nginx con IP para pruebas
+  sudo tee /etc/nginx/sites-available/bridge > /dev/null <<NGINXCONF
+server {
+    listen 80;
+    server_name 82.223.44.29;
+    location / {
+        proxy_pass http://127.0.0.1:PUERTO_INTERNO;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+NGINXCONF
+  sudo ln -sf /etc/nginx/sites-available/bridge /etc/nginx/sites-enabled/bridge
+  sudo nginx -t && sudo systemctl reload nginx
+
+  echo "✅ Deploy completado — ver en http://82.223.44.29"
+```
 
 ---
 
@@ -74,74 +177,54 @@ npx cloudflared tunnel --url http://localhost:3000
 
 **Archivo:** `.github/workflows/deploy.yml`
 
-### Triggers
-- **Push a `main`** → deploy automático (sin dominio)
-- **Manual** (Actions → Run workflow) → deploy + dominio + SSL opcional
-
-### Secrets requeridos en GitHub
+### Secrets requeridos en GitHub (por repo)
 
 | Secret | Descripción |
 |---|---|
-| `VPS_HOST` | IP del servidor Ionos |
-| `VPS_USER` | Usuario SSH |
+| `VPS_HOST` | `82.223.44.29` |
+| `VPS_USER` | Usuario SSH del VPS |
 | `VPS_SSH_KEY` | Clave privada SSH completa |
-| `VPS_PORT` | Puerto SSH (normalmente 22) |
-| `BRIDGE_DOMAIN` | *(opcional)* Subdominio permanente asignado |
+| `VPS_PORT` | `22` |
+| `BRIDGE_DOMAIN` | *(opcional)* Subdominio cuando pase a producción |
 | `CERTBOT_EMAIL` | *(opcional)* Email para certificados SSL |
 
-### Flujo del deploy
-
-```
-Push a main
-    │
-    ├─ git pull en VPS
-    ├─ docker compose down
-    ├─ docker compose up --build
-    │
-    └─ ¿BRIDGE_DOMAIN configurado?
-         ├─ SÍ → genera nginx.conf + certbot SSL
-         └─ NO → panel accesible en :8080 (solo red interna)
-```
+### Triggers
+- **Push a `main`** → deploy automático → visible en `http://82.223.44.29`
+- **Manual con dominio** → `Actions → Run workflow → ingresar subdominio` → Nginx + SSL automático
 
 ---
 
-## Cómo asignar dominio a un deploy
+## Cómo pasar un proyecto a producción con dominio
 
-### Opción A — Via GitHub Actions (recomendado)
-1. En Newbox/DNS: crear registro `A` → `bridge.iamet.mx` → IP del VPS
-2. En GitHub: `Actions` → `Deploy to VPS` → `Run workflow`
-3. Ingresar el subdominio en el input: `bridge.iamet.mx`
-4. El workflow crea la config Nginx + genera el certificado SSL automáticamente
+```
+1. Crear registro A en Newbox:
+   Tipo: A | Nombre: subdominio | Valor: 82.223.44.29 | TTL: 300
 
-### Opción B — Secret permanente
-1. En GitHub: `Settings` → `Secrets` → agregar `BRIDGE_DOMAIN=bridge.iamet.mx`
-2. El próximo push configura Nginx + SSL automáticamente
+2. En GitHub:
+   Actions → Deploy to VPS → Run workflow → ingresar "subdominio.iamet.mx"
 
-### Opción C — Manual en el VPS
-```bash
-sudo nano /etc/nginx/sites-available/bridge
-# Pegar config con server_name y proxy_pass a :8080
-sudo ln -s /etc/nginx/sites-available/bridge /etc/nginx/sites-enabled/bridge
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d bridge.iamet.mx
+3. El workflow hace automáticamente:
+   ✅ Actualiza el config Nginx con el subdominio
+   ✅ Genera certificado SSL con Certbot
+   ✅ App disponible en https://subdominio.iamet.mx
 ```
 
 ---
 
 ## Seguridad
 
-- **PIN de acceso** obligatorio en el frontend (`MASTER_PIN` en `backend_mac/server.js`)
-- PIN actual: `1234` → cambiar antes de producción
-- Recomendado: mover PIN a variable de entorno `.env` con `dotenv`
-- Autenticación via `socket.handshake.auth.token` (Socket.io middleware)
-- `sessionStorage` guarda el token — se borra al cerrar la pestaña
+- Puerto 80/443 son los únicos expuestos externamente (Ionos)
+- SSH solo por clave privada (sin password)
+- Contenedores Docker aislados en red interna
+- PIN de acceso en el frontend del bridge (`MASTER_PIN` en `server.js`)
+- Recomendado: mover PIN a `.env` con `dotenv` antes de producción
 
 ---
 
 ## Pendientes antes de producción
 
 - [ ] Mover `MASTER_PIN` a `.env` con `dotenv`
-- [ ] Crear registro DNS para subdominio definitivo
+- [ ] Crear registro DNS `bridge.iamet.mx` en Newbox
 - [ ] Asignar dominio via GitHub Actions workflow_dispatch
-- [ ] Cambiar `MAC_HUB_URL` en `public/index.html` cuando cambie el túnel Cloudflare
+- [ ] Actualizar `MAC_HUB_URL` en `public/index.html` cuando cambie el túnel Cloudflare
 - [ ] Implementar lógica real de IA (reemplazar `exec()` con llamadas a APIs)
