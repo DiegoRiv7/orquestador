@@ -518,7 +518,10 @@ function startIdea() {
 
 // ── Send action button ────────────────────────────────────────
 function sendAction(action, text) {
-    if (!socket || !socket.connected) return;
+    if (!socket || !socket.connected) {
+        addSysBubble('Error', 'Sin conexión al Hub. Recarga la página.');
+        return;
+    }
     const payload = { action };
     if (text) payload.text = text;
     socket.emit('fab:action', payload);

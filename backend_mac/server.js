@@ -133,45 +133,48 @@ delay 0.8
   `);
 }
 
-// ─── Inyectar texto: pbcopy → clic físico en input → Cmd+V → Enter ───────────
+// ─── Inyectar texto: coordenadas exactas del input vía window.screenX/Y ──────
 async function focusAndType(urlFragment, text) {
   console.log(`[Motor] focusAndType → "${text.slice(0, 80)}"`);
 
-  // 1. Copiar texto al portapapeles del Mac
+  // 1. Copiar texto al portapapeles
   await new Promise((resolve, reject) => {
     const proc = exec('pbcopy', (err) => err ? reject(err) : resolve());
     proc.stdin.write(text, 'utf8');
     proc.stdin.end();
   });
-  console.log('[Motor] ✅ Texto en portapapeles');
+  console.log('[Motor] ✅ pbcopy ok');
 
-  // 2. Traer Safari al frente y asegurarse que la ventana esté activa
-  await runScript(`
+  // 2. Activar Safari
+  await runScript(`tell application "Safari"\n  activate\nend tell\ndelay 0.5`);
+
+  // 3. Calcular coordenadas EXACTAS del input usando window.screenX/Y + getBoundingClientRect
+  //    window.screenX/Y ya incluyen el chrome del browser → coordenadas absolutas de pantalla
+  const posResult = await runScript(`
 tell application "Safari"
-  activate
+  set coords to do JavaScript "(function(){var ss=['[contenteditable=\\"true\\"]','textarea','[role=\\"textbox\\"]'];for(var i=0;i<ss.length;i++){var els=document.querySelectorAll(ss[i]);if(els.length){var el=els[els.length-1];var r=el.getBoundingClientRect();var sx=Math.round(window.screenX+r.left+r.width/2);var sy=Math.round(window.screenY+r.top+r.height/2);return sx+'|'+sy;}}return 'NOTFOUND';})()" in current tab of window 1
+  return coords
 end tell
-delay 0.6
   `);
+  console.log(`[Motor] Posición input en pantalla: ${posResult}`);
 
-  // 3. Calcular posición del input (parte inferior central de la ventana Safari)
-  //    y hacer clic físico ahí para enfocar el campo
-  const clickResult = await runScript(`
+  if (posResult === 'NOTFOUND') throw new Error('No se encontró el campo de texto en la página');
+
+  const [sx, sy] = posResult.split('|').map(Number);
+
+  // 4. Clic físico en las coordenadas exactas del input
+  await runScript(`
 tell application "System Events"
   tell process "Safari"
-    set winPos  to position of front window
-    set winSize to size of front window
-    set clickX to (item 1 of winPos) + (item 1 of winSize) / 2
-    set clickY to (item 2 of winPos) + (item 2 of winSize) - 100
-    click at {clickX, clickY}
-    return (clickX as string) & "," & (clickY as string)
+    click at {${sx}, ${sy}}
   end tell
 end tell
   `);
-  console.log(`[Motor] ✅ Clic en input: ${clickResult}`);
+  console.log(`[Motor] ✅ Clic en ${sx},${sy}`);
 
-  await new Promise(r => setTimeout(r, 600));
+  await new Promise(r => setTimeout(r, 500));
 
-  // 4. Seleccionar todo el texto previo y pegar el nuevo
+  // 5. Seleccionar todo + pegar desde portapapeles
   await runScript(`
 tell application "System Events"
   tell process "Safari"
@@ -182,9 +185,9 @@ tell application "System Events"
   end tell
 end tell
   `);
-  console.log('[Motor] ✅ Texto pegado');
+  console.log('[Motor] ✅ Pegado');
 
-  // 5. Enviar con Enter
+  // 6. Enter para enviar
   await runScript(`
 tell application "System Events"
   tell process "Safari"
@@ -192,7 +195,7 @@ tell application "System Events"
   end tell
 end tell
   `);
-  console.log('[Motor] ✅ Enter enviado');
+  console.log('[Motor] ✅ Enter');
 }
 
 // ─────────────────────────────────────────────────────────────────
