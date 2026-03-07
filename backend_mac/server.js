@@ -133,36 +133,45 @@ delay 0.8
   `);
 }
 
-// ─── Enfocar input y pegar texto ────────────────────────────────
+// ─── Inyectar texto via JS + execCommand (funciona con React/Gemini) ──
 async function focusAndType(urlFragment, text) {
-  // Copiar texto a clipboard
-  await new Promise((resolve, reject) => {
-    const proc = spawn('pbcopy');
-    proc.stdin.write(text, 'utf8');
-    proc.stdin.end();
-    proc.on('close', resolve);
-    proc.on('error', reject);
-  });
+  // Escribir JS a archivo temporal para evitar problemas de escaping
+  const jsTmp = `/tmp/fab_inject_${Date.now()}.js`;
+  const escapedText = text.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+  fs.writeFileSync(jsTmp, `
+(function() {
+  var selectors = ['[contenteditable="true"]', 'textarea', '[role="textbox"]', 'input[type="text"]'];
+  var el = null;
+  for (var i = 0; i < selectors.length; i++) {
+    var els = document.querySelectorAll(selectors[i]);
+    if (els.length) { el = els[els.length - 1]; break; }
+  }
+  if (!el) return;
+  el.focus();
+  el.click();
+  // Limpiar contenido previo
+  document.execCommand('selectAll', false, null);
+  document.execCommand('delete', false, null);
+  // Insertar texto (funciona con React y contenteditable)
+  document.execCommand('insertText', false, \`${escapedText}\`);
+})()
+  `, 'utf8');
 
-  // Enfocar el campo via do JavaScript in current tab (funciona sin URL matching)
-  try {
-    await runScript(`
+  await runScript(`
+set jsFile to "${jsTmp}"
+set jsCode to read POSIX file jsFile
 tell application "Safari"
-  do JavaScript "(function(){var els=document.querySelectorAll('[contenteditable=\\"true\\"],textarea,[role=\\"textbox\\"]');if(els.length){var el=els[els.length-1];el.click();el.focus();}})()" in current tab of window 1
+  do JavaScript jsCode in current tab of window 1
 end tell
-    `);
-  } catch(e) { /* continuar aunque falle */ }
+do shell script "rm -f ${jsTmp}"
+  `);
 
-  await new Promise(r => setTimeout(r, 400));
+  await new Promise(r => setTimeout(r, 600));
 
-  // Seleccionar todo y pegar
+  // Enviar con Enter
   await runScript(`
 tell application "System Events"
   tell process "Safari"
-    keystroke "a" using command down
-    delay 0.2
-    keystroke "v" using command down
-    delay 0.5
     key code 36
   end tell
 end tell
