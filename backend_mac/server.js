@@ -133,47 +133,58 @@ delay 0.8
   `);
 }
 
-// ─── Inyectar texto via JS + execCommand con JSON.stringify (100% safe) ──────
+// ─── Inyectar texto: pbcopy → clic físico en input → Cmd+V → Enter ───────────
 async function focusAndType(urlFragment, text) {
-  console.log(`[Motor] focusAndType → "${text.slice(0, 80)}..."`);
+  console.log(`[Motor] focusAndType → "${text.slice(0, 80)}"`);
 
-  // JSON.stringify maneja TODOS los caracteres especiales de forma segura
-  const textJson = JSON.stringify(text);
+  // 1. Copiar texto al portapapeles del Mac
+  await new Promise((resolve, reject) => {
+    const proc = exec('pbcopy', (err) => err ? reject(err) : resolve());
+    proc.stdin.write(text, 'utf8');
+    proc.stdin.end();
+  });
+  console.log('[Motor] ✅ Texto en portapapeles');
 
-  const jsTmp = `/tmp/fab_inject_${Date.now()}.js`;
-  fs.writeFileSync(jsTmp, `
-(function() {
-  var text = ${textJson};
-  var selectors = ['[contenteditable="true"]', 'textarea', '[role="textbox"]', 'input[type="text"]'];
-  var el = null;
-  for (var i = 0; i < selectors.length; i++) {
-    var els = document.querySelectorAll(selectors[i]);
-    if (els.length) { el = els[els.length - 1]; break; }
-  }
-  if (!el) return 'ERROR:no_element';
-  el.focus();
-  el.click();
-  document.execCommand('selectAll', false, null);
-  document.execCommand('delete', false, null);
-  var result = document.execCommand('insertText', false, text);
-  return 'OK:' + result + ':' + el.tagName + ':' + text.slice(0, 30);
-})()
-  `, 'utf8');
-
-  const jsResult = await runScript(`
-set jsFile to "${jsTmp}"
-set jsCode to read POSIX file jsFile
+  // 2. Traer Safari al frente y asegurarse que la ventana esté activa
+  await runScript(`
 tell application "Safari"
-  set r to do JavaScript jsCode in current tab of window 1
-  return r
+  activate
 end tell
-do shell script "rm -f ${jsTmp}"
+delay 0.6
   `);
-  console.log(`[Motor] JS inject result: ${jsResult}`);
 
-  await new Promise(r => setTimeout(r, 500));
+  // 3. Calcular posición del input (parte inferior central de la ventana Safari)
+  //    y hacer clic físico ahí para enfocar el campo
+  const clickResult = await runScript(`
+tell application "System Events"
+  tell process "Safari"
+    set winPos  to position of front window
+    set winSize to size of front window
+    set clickX to (item 1 of winPos) + (item 1 of winSize) / 2
+    set clickY to (item 2 of winPos) + (item 2 of winSize) - 100
+    click at {clickX, clickY}
+    return (clickX as string) & "," & (clickY as string)
+  end tell
+end tell
+  `);
+  console.log(`[Motor] ✅ Clic en input: ${clickResult}`);
 
-  // Enviar con Enter via System Events
+  await new Promise(r => setTimeout(r, 600));
+
+  // 4. Seleccionar todo el texto previo y pegar el nuevo
+  await runScript(`
+tell application "System Events"
+  tell process "Safari"
+    keystroke "a" using command down
+    delay 0.3
+    keystroke "v" using command down
+    delay 0.8
+  end tell
+end tell
+  `);
+  console.log('[Motor] ✅ Texto pegado');
+
+  // 5. Enviar con Enter
   await runScript(`
 tell application "System Events"
   tell process "Safari"
@@ -181,7 +192,7 @@ tell application "System Events"
   end tell
 end tell
   `);
-  console.log('[Motor] Enter enviado');
+  console.log('[Motor] ✅ Enter enviado');
 }
 
 // ─────────────────────────────────────────────────────────────────
