@@ -133,41 +133,55 @@ delay 0.8
   `);
 }
 
-// ─── Inyectar texto via clipboard + Cmd+V (más confiable con React/Gemini) ──
+// ─── Inyectar texto via JS + execCommand con JSON.stringify (100% safe) ──────
 async function focusAndType(urlFragment, text) {
-  console.log(`[Motor] focusAndType → "${text.slice(0, 60)}..."`);
+  console.log(`[Motor] focusAndType → "${text.slice(0, 80)}..."`);
 
-  // 1. Copiar texto al portapapeles
-  await new Promise((resolve, reject) => {
-    const proc = exec('pbcopy', (err) => err ? reject(err) : resolve());
-    proc.stdin.write(text, 'utf8');
-    proc.stdin.end();
-  });
-  console.log('[Motor] Texto copiado al portapapeles');
+  // JSON.stringify maneja TODOS los caracteres especiales de forma segura
+  const textJson = JSON.stringify(text);
 
-  // 2. Enfocar el input via JS (click + focus, sin modificar contenido)
-  await runScript(`
+  const jsTmp = `/tmp/fab_inject_${Date.now()}.js`;
+  fs.writeFileSync(jsTmp, `
+(function() {
+  var text = ${textJson};
+  var selectors = ['[contenteditable="true"]', 'textarea', '[role="textbox"]', 'input[type="text"]'];
+  var el = null;
+  for (var i = 0; i < selectors.length; i++) {
+    var els = document.querySelectorAll(selectors[i]);
+    if (els.length) { el = els[els.length - 1]; break; }
+  }
+  if (!el) return 'ERROR:no_element';
+  el.focus();
+  el.click();
+  document.execCommand('selectAll', false, null);
+  document.execCommand('delete', false, null);
+  var result = document.execCommand('insertText', false, text);
+  return 'OK:' + result + ':' + el.tagName + ':' + text.slice(0, 30);
+})()
+  `, 'utf8');
+
+  const jsResult = await runScript(`
+set jsFile to "${jsTmp}"
+set jsCode to read POSIX file jsFile
 tell application "Safari"
-  do JavaScript "(function(){var s=['[contenteditable=\\"true\\"]','textarea','[role=\\"textbox\\"]','input[type=\\"text\\"]'];for(var i=0;i<s.length;i++){var els=document.querySelectorAll(s[i]);if(els.length){var el=els[els.length-1];el.focus();el.click();return;}}})()" in current tab of window 1
+  set r to do JavaScript jsCode in current tab of window 1
+  return r
 end tell
+do shell script "rm -f ${jsTmp}"
   `);
-  console.log('[Motor] Input enfocado via JS');
+  console.log(`[Motor] JS inject result: ${jsResult}`);
 
   await new Promise(r => setTimeout(r, 500));
 
-  // 3. Seleccionar todo, pegar y enviar con Enter (System Events — OS level)
+  // Enviar con Enter via System Events
   await runScript(`
 tell application "System Events"
   tell process "Safari"
-    keystroke "a" using command down
-    delay 0.3
-    keystroke "v" using command down
-    delay 0.8
     key code 36
   end tell
 end tell
   `);
-  console.log('[Motor] Pegado y Enter enviado');
+  console.log('[Motor] Enter enviado');
 }
 
 // ─────────────────────────────────────────────────────────────────
