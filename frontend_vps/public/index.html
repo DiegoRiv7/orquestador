@@ -544,9 +544,10 @@ function closeOverlay() {
 function confirmOverlay() {
     const text = document.getElementById('overlayText').value.trim();
     if (!text) return;
+    const action = overlayAction;
     closeOverlay();
     addUserBubble(text);
-    sendAction(overlayAction, text);
+    sendAction(action, text);
 }
 
 // ── Socket setup ──────────────────────────────────────────────
