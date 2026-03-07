@@ -355,23 +355,80 @@ async function captureManusResult() {
   }
 }
 
+// ─── Contexto del VPS para Claude ────────────────────────────────────────────
+const VPS_CONTEXT = `
+---
+## CONTEXTO VPS (leer antes de actuar)
+
+- **VPS:** 82.223.44.29 (Ubuntu, Ionos)
+- **Deploy:** push a GitHub main → GitHub Actions → Docker en VPS
+- **Nginx:** único punto de entrada. Solo puertos 80/443 expuestos al exterior.
+- **Puertos internos disponibles:** 8081, 8082, 8083, 8084, 8085, 8086
+
+### Estructura obligatoria de cada proyecto
+\`\`\`
+proyecto/
+├── .github/workflows/deploy.yml   ← CI/CD (copiar de orquestador y adaptar)
+├── frontend_vps/
+│   ├── Dockerfile
+│   ├── docker-compose.yml         ← puerto debe ser uno de los disponibles
+│   ├── nginx/default.conf
+│   └── public/                    ← archivos estáticos o build del frontend
+\`\`\`
+
+### docker-compose.yml mínimo
+\`\`\`yaml
+version: "3.8"
+services:
+  web:
+    build: .
+    container_name: nombre-proyecto
+    restart: unless-stopped
+    ports:
+      - "808X:80"
+\`\`\`
+
+### deploy.yml — pasos requeridos en el VPS
+1. git clone/pull del repo en el VPS
+2. cd frontend_vps && docker compose down && docker compose up -d --build
+3. sudo tee /etc/nginx/sites-available/bridge con server_name 82.223.44.29 → proxy al puerto del proyecto
+4. sudo nginx -t && sudo systemctl reload nginx
+
+### Secrets requeridos en GitHub del proyecto
+VPS_HOST, VPS_USER, VPS_SSH_KEY, VPS_PORT (copiar de repo orquestador)
+---
+`;
+
 // ─────────────────────────────────────────────────────────────────
 //  CLAUDE
 // ─────────────────────────────────────────────────────────────────
 async function injectClaude(instructions) {
   const instrFile = `/tmp/claude_task_${Date.now()}.md`;
-  fs.writeFileSync(instrFile, instructions, 'utf8');
+  const shFile    = `/tmp/claude_run_${Date.now()}.sh`;
 
-  // Abrir nueva ventana de Terminal con claude
+  fs.writeFileSync(instrFile, instructions + VPS_CONTEXT, 'utf8');
+
+  // Shell script para lanzar Claude con auto-aceptación de permisos
+  fs.writeFileSync(shFile, `#!/bin/bash
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  AI Factory -> Claude Code"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+cat "${instrFile}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+TASK=$(cat "${instrFile}")
+claude --dangerously-skip-permissions -p "$TASK"
+`, 'utf8');
+
   await runScript(`
 tell application "Terminal"
   activate
-  set newWin to do script "echo '\\n━━━ INSTRUCCIONES PARA CLAUDE ━━━' && cat \\"${instrFile}\\" && echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' && claude"
-  set bounds of front window to {50, 50, 1200, 800}
+  do script "chmod +x ${shFile} && bash ${shFile}"
+  set bounds of front window to {50, 50, 1400, 900}
 end tell
   `);
 
-  emitProgress('Claude abierto. Procesando instrucciones...');
+  emitProgress('Claude iniciado (auto-aceptando permisos)...');
   startClaudeMonitor();
 }
 
@@ -482,13 +539,36 @@ io.on('connection', (socket) => {
 
         // ── Desde MANUS_DONE ─────────────────────────────────────
         case 'manus_to_claude':
-          emitState(S.CLAUDE_WORKING, 'Pasando a Claude Code...');
-          await injectClaude(`Revisa y mejora el siguiente proyecto generado por Manus:\n\n${fab.manusResult}`);
+          emitState(S.CLAUDE_WORKING, 'Enviando a Claude Code...');
+          await injectClaude(
+            `# Proyecto de Manus para revisar y desplegar\n\n` +
+            `Manus generó el siguiente proyecto y lo subió a GitHub.\n` +
+            `Aquí está el reporte/output de Manus:\n\n${fab.manusResult}\n\n` +
+            `## Tu tarea\n` +
+            `1. Extrae la URL del repositorio GitHub del texto anterior\n` +
+            `2. Clona el repositorio localmente\n` +
+            `3. Verifica que el código esté completo y compile\n` +
+            `4. Verifica/crea Dockerfile, docker-compose.yml y deploy.yml siguiendo el contexto VPS al final\n` +
+            `5. Si hiciste cambios, haz commit y push al repo\n` +
+            `6. Confirma con: "✅ Proyecto listo. Repo: [url]. Puerto: [puerto]. Puedo desplegar cuando autorices."\n`
+          );
+          break;
+
+        case 'manus_to_claude_custom':
+          if (!text?.trim()) return;
+          emitState(S.CLAUDE_WORKING, 'Enviando instrucciones a Claude...');
+          await injectClaude(text.trim());
           break;
 
         case 'retry_manus':
           emitState(S.MANUS_WORKING, 'Reintentando con Manus...');
           await injectManus(fab.geminiResult || fab.idea);
+          break;
+
+        case 'otro_manus':
+          if (!text?.trim()) return;
+          emitState(S.MANUS_WORKING, 'Enviando mensaje a Manus...');
+          await injectManus(text.trim());
           break;
 
         case 'deploy_from_manus':

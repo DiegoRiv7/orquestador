@@ -468,21 +468,48 @@ function renderPanel(state, data) {
     }
 
     else if (state === S.MANUS_DONE) {
-        if (data && data.result) p.appendChild(mkPreview('MANUS - RESULTADO', data.result));
+        if (data && data.result) {
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble bubble-sys';
+            bubble.style.cssText += 'max-height:55vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word;';
+            const lbl = document.createElement('strong');
+            lbl.textContent = 'Manus';
+            bubble.appendChild(lbl);
+            bubble.appendChild(document.createTextNode('\n' + data.result));
+            chat.appendChild(bubble);
+            scrollBottom();
+        }
         p.appendChild(mkGrid(1, [mkBtn('ab ab-blue', 'Enviar a Claude Code', () => sendAction('manus_to_claude'))]));
-        p.appendChild(mkGrid(3, [
+        p.appendChild(mkGrid(2, [
+            mkBtn('ab ab-ghost', 'Editar y enviar a Claude', () => {
+                const txt = data && data.result ? data.result : '';
+                openOverlay('Editar para Claude', 'Edita las instrucciones...', 'manus_to_claude_custom');
+                setTimeout(() => { document.getElementById('overlayText').value = txt; }, 50);
+            }),
+            mkBtn('ab ab-ghost', 'Otro mensaje a Manus', () => openOverlay('Nuevo mensaje a Manus', 'Escribe aqui...', 'otro_manus'))
+        ]));
+        p.appendChild(mkGrid(2, [
             mkBtn('ab ab-orange', 'Deploy directo', () => sendAction('deploy_from_manus')),
-            mkBtn('ab ab-ghost', 'Reintentar', () => sendAction('retry_manus')),
-            mkBtn('ab ab-ghost', 'Refinar', () => openOverlay('Refinar con Gemini', 'Refinar prompt', 'refine_gemini'))
+            mkBtn('ab ab-ghost', 'Reintentar Manus', () => sendAction('retry_manus'))
         ]));
     }
 
     else if (state === S.CLAUDE_DONE) {
-        if (data && data.result) p.appendChild(mkPreview('CLAUDE - REVISION', data.result));
-        p.appendChild(mkGrid(1, [mkBtn('ab ab-primary', 'Deploy a VPS', () => sendAction('deploy'))]));
+        if (data && data.content) {
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble bubble-sys';
+            bubble.style.cssText += 'max-height:55vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word;font-size:0.82rem;';
+            const lbl = document.createElement('strong');
+            lbl.textContent = 'Claude';
+            bubble.appendChild(lbl);
+            bubble.appendChild(document.createTextNode('\n' + data.content));
+            chat.appendChild(bubble);
+            scrollBottom();
+        }
+        p.appendChild(mkGrid(1, [mkBtn('ab ab-primary', 'Autorizar Deploy a VPS', () => sendAction('deploy'))]));
         p.appendChild(mkGrid(2, [
-            mkBtn('ab ab-ghost', 'Reintentar Claude', () => sendAction('retry_claude')),
-            mkBtn('ab ab-ghost', 'Personalizar', () => openOverlay('Instruccion para Claude', 'Que correccion aplicar', 'custom_claude'))
+            mkBtn('ab ab-ghost', 'Otro mensaje a Claude', () => openOverlay('Instruccion para Claude', 'Que necesitas que haga...', 'custom_claude')),
+            mkBtn('ab ab-ghost', 'Reintentar Claude', () => sendAction('retry_claude'))
         ]));
     }
 
