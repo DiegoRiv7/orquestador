@@ -43,22 +43,69 @@ const S = {
 
 // ─── Estado global de la fábrica ──────────────────────────────────
 let fab = {
-  state:        S.IDLE,
-  idea:         '',
-  geminiResult: '',
-  manusResult:  '',
-  claudeResult: '',
-  deployUrl:    '',
-  monitor:      null,
-  socket:       null,
-  customAction: null   // acción pendiente cuando usuario edita texto
+  state:          S.IDLE,
+  idea:           '',
+  geminiResult:   '',
+  geminiConvUrl:  '',
+  manusResult:    '',
+  manusConvUrl:   '',
+  claudeResult:   '',
+  deployUrl:      '',
+  monitor:        null,
+  socket:         null,
+  customAction:   null,
+  projectId:      null,
+  createdAt:      null
 };
 
 function resetFab() {
   if (fab.monitor) clearInterval(fab.monitor);
   const sock = fab.socket;
-  fab = { state: S.IDLE, idea: '', geminiResult: '', manusResult: '',
-          claudeResult: '', deployUrl: '', monitor: null, socket: sock, customAction: null };
+  fab = { state: S.IDLE, idea: '', geminiResult: '', geminiConvUrl: '',
+          manusResult: '', manusConvUrl: '', claudeResult: '', deployUrl: '',
+          monitor: null, socket: sock, customAction: null, projectId: null, createdAt: null };
+}
+
+// ─── Proyectos: guardar/cargar historial ──────────────────────────────────
+const PROJECTS_FILE = path.join(process.env.HOME, 'orquestador', 'fab_projects.json');
+
+function loadProjects() {
+  try {
+    if (fs.existsSync(PROJECTS_FILE)) return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8'));
+  } catch(e) {}
+  return [];
+}
+
+function saveCurrentProject() {
+  if (!fab.idea) return;
+  if (!fab.projectId) { fab.projectId = `proj_${Date.now()}`; fab.createdAt = new Date().toISOString(); }
+  const projects = loadProjects();
+  const project = {
+    id: fab.projectId, name: fab.idea.slice(0, 80),
+    idea: fab.idea, createdAt: fab.createdAt, updatedAt: new Date().toISOString(),
+    state: fab.state, geminiResult: fab.geminiResult, geminiConvUrl: fab.geminiConvUrl,
+    manusResult: fab.manusResult, manusConvUrl: fab.manusConvUrl,
+    claudeResult: fab.claudeResult, deployUrl: fab.deployUrl
+  };
+  const idx = projects.findIndex(p => p.id === fab.projectId);
+  if (idx >= 0) projects[idx] = project; else projects.unshift(project);
+  projects.splice(50); // max 50 projects
+  try { fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2), 'utf8'); } catch(e) {}
+}
+
+async function getCurrentTabUrl(urlFragment) {
+  try {
+    return await runScript(`
+tell application "Safari"
+  repeat with w in windows
+    repeat with t in tabs of w
+      if URL of t contains "${urlFragment}" then return URL of t
+    end repeat
+  end repeat
+end tell
+return ""
+    `);
+  } catch(e) { return ''; }
 }
 
 // ─── Helpers de emisión ───────────────────────────────────────────
@@ -66,6 +113,7 @@ function emitState(state, message, data = {}) {
   fab.state = state;
   if (fab.socket) fab.socket.emit('fab:state', { state, message, data });
   console.log(`[Motor] ▶ ${state} — ${message}`);
+  saveCurrentProject();
 }
 
 function emitProgress(message) {
@@ -203,6 +251,10 @@ end tell
 // ─────────────────────────────────────────────────────────────────
 async function injectGemini(text) {
   await switchToTab('gemini.google.com');
+  if (!fab.geminiConvUrl) {
+    fab.geminiConvUrl = await getCurrentTabUrl('gemini.google.com');
+    console.log(`[Motor] Gemini conv URL: ${fab.geminiConvUrl}`);
+  }
   emitProgress('Gemini abierto, enviando prompt...');
   await focusAndType('gemini.google.com', text);
   emitProgress('Prompt enviado. Gemini está pensando...');
@@ -289,6 +341,10 @@ end tell
 // ─────────────────────────────────────────────────────────────────
 async function injectManus(text) {
   await switchToTab('manus.im');
+  if (!fab.manusConvUrl) {
+    fab.manusConvUrl = await getCurrentTabUrl('manus.im');
+    console.log(`[Motor] Manus conv URL: ${fab.manusConvUrl}`);
+  }
   emitProgress('Manus abierto, enviando prompt...');
   await focusAndType('manus.im', text);
   emitProgress('Prompt enviado. Manus construyendo...');
@@ -341,17 +397,31 @@ function startManusMonitor() {
 async function captureManusResult() {
   try {
     if (fab.monitor) { clearInterval(fab.monitor); fab.monitor = null; }
-    const result = await runSafariJS('manus.im', `
-(function() {
-  var els = document.querySelectorAll('[class*="message"],[class*="agent"],[class*="task"],[class*="result"],[class*="output"]');
-  if (els.length) return els[els.length - 1].innerText.trim().slice(0, 3000);
-  return document.body.innerText.slice(0, 3000);
-})()
+    emitProgress('Ejecutando captura en Manus...');
+
+    await switchToTab('manus.im');
+    if (!fab.manusConvUrl) fab.manusConvUrl = await getCurrentTabUrl('manus.im');
+    await new Promise(r => setTimeout(r, 800));
+
+    const result = await runScript(`
+tell application "Safari"
+  set r to do JavaScript "(function(){var els=document.querySelectorAll('[class*=\\"message\\"],[class*=\\"agent\\"],[class*=\\"task\\"],[class*=\\"result\\"],[class*=\\"output\\"],[class*=\\"response\\"]');if(els.length){var t=els[els.length-1].innerText.trim();if(t.length>50)return t.slice(0,8000);}return document.body.innerText.slice(0,8000);})()" in current tab of window 1
+  return r
+end tell
     `);
+
+    console.log(`[Motor] Manus capturado: ${(result||'').length} chars`);
+
+    if (!result || result.trim().length < 10) {
+      emitProgress('Captura vacía — intenta de nuevo');
+      return;
+    }
+
     fab.manusResult = result;
-    emitState(S.MANUS_DONE, 'Manus completó la tarea. ¿Qué hacemos ahora?', { result });
+    emitState(S.MANUS_DONE, 'Manus terminó. Revisa la respuesta.', { result });
   } catch(e) {
-    emitProgress('Error capturando Manus: ' + e.message);
+    console.error('[Motor] Error captureManusResult:', e.message);
+    emitProgress('Error captura Manus: ' + e.message);
   }
 }
 
@@ -487,6 +557,7 @@ io.on('connection', (socket) => {
 
   // Sincronizar estado actual al conectar
   socket.emit('fab:state', { state: fab.state, message: 'Motor conectado. Listo para trabajar.', data: {} });
+  socket.emit('fab:projects', loadProjects());
 
   // ── Iniciar con Gemini ────────────────────────────────────────
   socket.on('fab:idea', async ({ text } = {}) => {
@@ -618,6 +689,42 @@ io.on('connection', (socket) => {
       emitProgress('❌ Error: ' + e.message);
       console.error('[Motor] Error:', e);
     }
+  });
+
+  // ── Cargar proyecto guardado ──────────────────────────────
+  socket.on('fab:load_project', async ({ id } = {}) => {
+    fab.socket = socket;
+    const projects = loadProjects();
+    const p = projects.find(pr => pr.id === id);
+    if (!p) { socket.emit('fab:progress', { message: 'Proyecto no encontrado' }); return; }
+
+    if (fab.monitor) { clearInterval(fab.monitor); fab.monitor = null; }
+    fab.projectId    = p.id;
+    fab.createdAt    = p.createdAt;
+    fab.idea         = p.idea || '';
+    fab.geminiResult = p.geminiResult || '';
+    fab.geminiConvUrl= p.geminiConvUrl || '';
+    fab.manusResult  = p.manusResult || '';
+    fab.manusConvUrl = p.manusConvUrl || '';
+    fab.claudeResult = p.claudeResult || '';
+    fab.deployUrl    = p.deployUrl || '';
+
+    // Navegar Safari a la conversación guardada
+    if (p.geminiConvUrl) {
+      try {
+        await runScript(`tell application "Safari"\n  open location "${p.geminiConvUrl}"\n  activate\nend tell\ndelay 1`);
+      } catch(e) {}
+    }
+
+    const restoredState = p.state || S.IDLE;
+    const data = {};
+    if (p.geminiResult)  data.result  = p.geminiResult;
+    if (p.manusResult)   data.result  = p.manusResult;
+    if (p.claudeResult)  data.content = p.claudeResult;
+    if (p.deployUrl)     data.url     = p.deployUrl;
+
+    emitState(restoredState, `Proyecto "${p.name}" restaurado.`, data);
+    console.log(`[Motor] Proyecto cargado: ${p.name} (${restoredState})`);
   });
 
   // ── Comandos heredados ────────────────────────────────────────

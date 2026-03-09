@@ -153,6 +153,24 @@
         @keyframes shake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-10px)} 40%{transform:translateX(10px)} 60%{transform:translateX(-6px)} 80%{transform:translateX(6px)} }
         .pin-error { font-size: 0.82rem; color: var(--red); min-height: 18px; font-weight: 500; }
         .pin-btn { background: var(--blue); border: none; border-radius: 13px; color: white; font-size: 1rem; font-weight: 600; padding: 13px 44px; cursor: pointer; margin-top: 4px; }
+
+        /* ── History panel ───────────────────────────────── */
+        .hist-backdrop { position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:300;display:none; }
+        .hist-backdrop.open { display:block; }
+        .hist-panel { position:fixed;top:0;left:0;width:82%;max-width:340px;height:100dvh;background:var(--surface);z-index:301;transform:translateX(-100%);transition:transform 0.3s cubic-bezier(0.16,1,0.3,1);display:flex;flex-direction:column; }
+        .hist-panel.open { transform:translateX(0); }
+        .hist-head { padding:52px 18px 14px;border-bottom:0.5px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0; }
+        .hist-head-title { font-size:1rem;font-weight:700; }
+        .hist-close { background:rgba(255,255,255,0.08);border:none;border-radius:10px;color:var(--text2);padding:6px 12px;font-size:0.82rem;cursor:pointer; }
+        .hist-list { flex:1;overflow-y:auto;padding:10px 0; }
+        .hist-item { padding:13px 18px;cursor:pointer;border-bottom:0.5px solid var(--border2);transition:background 0.15s; }
+        .hist-item:active { background:var(--surface2); }
+        .hist-item-name { font-size:0.88rem;font-weight:600;color:var(--text);margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        .hist-item-meta { font-size:0.72rem;color:var(--text3);display:flex;gap:8px; }
+        .hist-item-state { font-size:0.68rem;font-weight:600;padding:2px 7px;border-radius:6px;background:rgba(255,255,255,0.07); }
+        .hist-empty { padding:40px 18px;color:var(--text3);font-size:0.85rem;text-align:center; }
+        .hist-btn { margin:14px;flex-shrink:0; }
+        .btn-hist { background:none;border:none;color:var(--text2);font-size:1.1rem;cursor:pointer;padding:4px 8px;line-height:1; }
     </style>
 </head>
 <body>
@@ -167,6 +185,7 @@
                 <div class="h-stage" id="hStage">Desconectado</div>
             </div>
         </div>
+        <button class="btn-hist" onclick="openHistory()" title="Proyectos">&#x1F4CB;</button>
         <button class="btn-lock" onclick="showLock(true)">Bloquear</button>
     </header>
 
@@ -212,6 +231,21 @@
         <button class="pin-btn" onclick="validatePIN()">Acceder</button>
     </div>
 
+</div>
+
+<!-- History panel -->
+<div class="hist-backdrop" id="histBackdrop" onclick="closeHistory()"></div>
+<div class="hist-panel" id="histPanel">
+    <div class="hist-head">
+        <span class="hist-head-title">Proyectos</span>
+        <button class="hist-close" onclick="closeHistory()">Cerrar</button>
+    </div>
+    <div class="hist-list" id="histList">
+        <div class="hist-empty">No hay proyectos guardados aún.</div>
+    </div>
+    <div class="hist-btn">
+        <button class="ab ab-ghost" style="width:100%;" onclick="closeHistory();sendAction('new_project')">+ Nuevo Proyecto</button>
+    </div>
 </div>
 
 <!-- Custom text overlay (shared modal) -->
@@ -554,6 +588,61 @@ function sendAction(action, text) {
     socket.emit('fab:action', payload);
 }
 
+// ── History panel ─────────────────────────────────────────────
+let allProjects = [];
+
+function openHistory() {
+    document.getElementById('histBackdrop').classList.add('open');
+    document.getElementById('histPanel').classList.add('open');
+}
+function closeHistory() {
+    document.getElementById('histBackdrop').classList.remove('open');
+    document.getElementById('histPanel').classList.remove('open');
+}
+
+function renderProjects(projects) {
+    allProjects = projects || [];
+    const list = document.getElementById('histList');
+    list.innerHTML = '';
+    if (!allProjects.length) {
+        const e = document.createElement('div');
+        e.className = 'hist-empty';
+        e.textContent = 'No hay proyectos guardados aún.';
+        list.appendChild(e);
+        return;
+    }
+    const stateLabels = { idle:'Inicio', gemini_working:'En Gemini', gemini_done:'Gemini listo',
+        manus_working:'En Manus', manus_done:'Manus listo', claude_working:'En Claude',
+        claude_done:'Claude listo', deploying:'Desplegando', done:'Completado' };
+    allProjects.forEach(p => {
+        const item = document.createElement('div');
+        item.className = 'hist-item';
+        const name = document.createElement('div');
+        name.className = 'hist-item-name';
+        name.textContent = p.name || p.idea || 'Sin nombre';
+        const meta = document.createElement('div');
+        meta.className = 'hist-item-meta';
+        const date = document.createElement('span');
+        date.textContent = p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('es-MX',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+        const state = document.createElement('span');
+        state.className = 'hist-item-state';
+        state.textContent = stateLabels[p.state] || p.state || '';
+        meta.appendChild(date);
+        meta.appendChild(state);
+        item.appendChild(name);
+        item.appendChild(meta);
+        item.onclick = () => loadProject(p.id);
+        list.appendChild(item);
+    });
+}
+
+function loadProject(id) {
+    closeHistory();
+    if (!socket || !socket.connected) { addSysBubble('Error', 'Sin conexión al Hub.'); return; }
+    socket.emit('fab:load_project', { id });
+    addSysBubble('Sistema', 'Cargando proyecto...');
+}
+
 // ── Overlay helpers ───────────────────────────────────────────
 function openOverlay(title, placeholder, action) {
     overlayAction = action;
@@ -645,6 +734,10 @@ function connectWithPin(pin) {
             panelContent.textContent = '';
             panelContent.appendChild(errDiv);
         }
+    });
+
+    socket.on('fab:projects', (projects) => {
+        renderProjects(projects);
     });
 
     socket.on('fab:progress', ({ message }) => {
