@@ -196,19 +196,32 @@ async function focusAndType(urlFragment, text) {
   // 2. Activar Safari
   await runScript(`tell application "Safari"\n  activate\nend tell\ndelay 0.5`);
 
-  // 3. Calcular coordenadas EXACTAS del input usando window.screenX/Y + getBoundingClientRect
-  //    window.screenX/Y ya incluyen el chrome del browser → coordenadas absolutas de pantalla
+  // 3. Buscar input con múltiples selectores (Gemini usa contenteditable, Manus puede usar otros)
   const posResult = await runScript(`
 tell application "Safari"
-  set coords to do JavaScript "(function(){var ss=['[contenteditable=\\"true\\"]','textarea','[role=\\"textbox\\"]'];for(var i=0;i<ss.length;i++){var els=document.querySelectorAll(ss[i]);if(els.length){var el=els[els.length-1];var r=el.getBoundingClientRect();var sx=Math.round(window.screenX+r.left+r.width/2);var sy=Math.round(window.screenY+r.top+r.height/2);return sx+'|'+sy;}}return 'NOTFOUND';})()" in current tab of window 1
+  set coords to do JavaScript "(function(){var ss=['[contenteditable=\\"true\\"]','textarea','[role=\\"textbox\\"]','[contenteditable]','[data-placeholder]','[class*=\\"editor\\"]','input[type=\\"text\\"]'];for(var i=0;i<ss.length;i++){var els=document.querySelectorAll(ss[i]);if(els.length){var el=els[els.length-1];var r=el.getBoundingClientRect();if(r.width>0&&r.height>0){var sx=Math.round(window.screenX+r.left+r.width/2);var sy=Math.round(window.screenY+r.top+r.height/2);return sx+'|'+sy;}}}return 'NOTFOUND';})()" in current tab of window 1
   return coords
 end tell
   `);
   console.log(`[Motor] Posición input en pantalla: ${posResult}`);
 
-  if (posResult === 'NOTFOUND') throw new Error('No se encontró el campo de texto en la página');
-
-  const [sx, sy] = posResult.split('|').map(Number);
+  // Fallback: si no encontró el elemento, usar parte inferior central de la ventana
+  let sx, sy;
+  if (!posResult || posResult === 'NOTFOUND' || !posResult.includes('|')) {
+    console.log('[Motor] ⚠️ Input no encontrado via JS, usando fallback por coordenadas de ventana');
+    const winInfo = await runScript(`
+tell application "System Events"
+  tell process "Safari"
+    set p to position of front window
+    set s to size of front window
+    return ((item 1 of p) + (item 1 of s) / 2) as integer & "|" & ((item 2 of p) + (item 2 of s) - 110) as integer
+  end tell
+end tell
+    `);
+    [sx, sy] = winInfo.split('|').map(Number);
+  } else {
+    [sx, sy] = posResult.split('|').map(Number);
+  }
 
   // 4. Clic físico en las coordenadas exactas del input
   await runScript(`
@@ -340,8 +353,12 @@ end tell
 //  MANUS
 // ─────────────────────────────────────────────────────────────────
 async function injectManus(text) {
-  await switchToTab('manus.im');
-  if (!fab.manusConvUrl) {
+  // Si hay una conversación guardada, navegar directamente a ella
+  if (fab.manusConvUrl) {
+    console.log(`[Motor] Navigando a conv Manus: ${fab.manusConvUrl}`);
+    await runScript(`tell application "Safari"\n  open location "${fab.manusConvUrl}"\n  activate\nend tell\ndelay 1.5`);
+  } else {
+    await switchToTab('manus.im');
     fab.manusConvUrl = await getCurrentTabUrl('manus.im');
     console.log(`[Motor] Manus conv URL: ${fab.manusConvUrl}`);
   }
@@ -349,6 +366,46 @@ async function injectManus(text) {
   await focusAndType('manus.im', text);
   emitProgress('Prompt enviado. Manus construyendo...');
   startManusMonitor();
+}
+
+// ─── Leer lista de conversaciones de Manus desde su sidebar ──────────────────
+async function getManusChats() {
+  await switchToTab('manus.im');
+  await new Promise(r => setTimeout(r, 800));
+  const jsTmp = `/tmp/fab_manus_chats_${Date.now()}.js`;
+  fs.writeFileSync(jsTmp, `
+(function() {
+  var found = [];
+  var sel = ['a[href*="/share/"]','a[href*="/task/"]','a[href*="/conversation/"]',
+             '[class*="task-item"]','[class*="session-item"]','[class*="conv-item"]',
+             'nav a','[class*="sidebar"] a','[class*="history"] a'];
+  for (var i = 0; i < sel.length; i++) {
+    var els = document.querySelectorAll(sel[i]);
+    if (els.length > 0) {
+      Array.from(els).forEach(function(el) {
+        var a = el.tagName === 'A' ? el : (el.querySelector('a') || el.closest('a'));
+        var url = a ? a.href : '';
+        var title = (el.innerText || '').trim().replace(/\\s+/g,' ').slice(0, 70);
+        if (title && url && url.includes('manus') && !found.find(function(f){return f.url===url;})) {
+          found.push({ title: title, url: url });
+        }
+      });
+      if (found.length >= 3) break;
+    }
+  }
+  return JSON.stringify(found.slice(0, 20));
+})()
+  `, 'utf8');
+  const raw = await runScript(`
+set jsFile to "${jsTmp}"
+set jsCode to read POSIX file jsFile
+tell application "Safari"
+  set r to do JavaScript jsCode in current tab of window 1
+  return r
+end tell
+do shell script "rm -f ${jsTmp}"
+  `);
+  try { return JSON.parse(raw || '[]'); } catch(e) { return []; }
 }
 
 function startManusMonitor() {
@@ -640,6 +697,20 @@ io.on('connection', (socket) => {
           if (!text?.trim()) return;
           emitState(S.MANUS_WORKING, 'Enviando mensaje a Manus...');
           await injectManus(text.trim());
+          break;
+
+        case 'list_manus_chats':
+          emitProgress('Leyendo conversaciones de Manus...');
+          const chats = await getManusChats();
+          console.log(`[Motor] Manus chats: ${chats.length}`);
+          if (fab.socket) fab.socket.emit('fab:manus_chats', chats);
+          break;
+
+        case 'select_manus_conv':
+          if (!text?.trim()) return;
+          fab.manusConvUrl = text.trim();
+          saveCurrentProject();
+          emitProgress(`Conversación de Manus vinculada: ${fab.manusConvUrl}`);
           break;
 
         case 'deploy_from_manus':

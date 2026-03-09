@@ -524,7 +524,7 @@ function renderPanel(state, data) {
         ]));
         p.appendChild(mkGrid(2, [
             mkBtn('ab ab-orange', 'Deploy directo', () => sendAction('deploy_from_manus')),
-            mkBtn('ab ab-ghost', 'Reintentar Manus', () => sendAction('retry_manus'))
+            mkBtn('ab ab-ghost', 'Cambiar chat de Manus', () => sendAction('list_manus_chats'))
         ]));
     }
 
@@ -643,6 +643,48 @@ function loadProject(id) {
     addSysBubble('Sistema', 'Cargando proyecto...');
 }
 
+// ── Selector de conversaciones de Manus ───────────────────────
+function showManusChats(chats) {
+    if (!chats || !chats.length) {
+        // Fallback: pegar URL manualmente
+        openOverlay('URL de conversación de Manus', 'Pega la URL del chat de Manus...', 'select_manus_conv');
+        return;
+    }
+    // Mostrar lista en overlay personalizado
+    const ov = document.getElementById('customOverlay');
+    const title = document.getElementById('overlayTitle');
+    const ta = document.getElementById('overlayText');
+    title.textContent = 'SELECCIONAR CHAT DE MANUS';
+    ta.style.display = 'none';
+    // Limpiar botones viejos
+    const sheet = ov.querySelector('.overlay-sheet');
+    const oldList = sheet.querySelector('.manus-chat-list');
+    if (oldList) oldList.remove();
+    // Crear lista
+    const list = document.createElement('div');
+    list.className = 'manus-chat-list';
+    list.style.cssText = 'display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;';
+    chats.forEach(function(c) {
+        const btn = document.createElement('button');
+        btn.style.cssText = 'background:rgba(255,255,255,0.07);border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;color:#fff;font-size:0.85rem;padding:11px 14px;text-align:left;cursor:pointer;';
+        btn.textContent = c.title;
+        btn.onclick = function() {
+            ta.style.display = '';
+            list.remove();
+            ov.style.display = 'none';
+            sendAction('select_manus_conv', c.url);
+            addSysBubble('Manus', 'Chat vinculado: ' + c.title);
+        };
+        list.appendChild(btn);
+    });
+    sheet.insertBefore(list, sheet.querySelector('.overlay-actions'));
+    overlayAction = null;
+    document.getElementById('overlayConfirm').style.display = 'none';
+    ov.style.display = 'flex';
+    // Al cancelar, restaurar textarea
+    document.getElementById('overlayText').style.display = '';
+}
+
 // ── Overlay helpers ───────────────────────────────────────────
 function openOverlay(title, placeholder, action) {
     overlayAction = action;
@@ -655,6 +697,10 @@ function openOverlay(title, placeholder, action) {
 }
 function closeOverlay() {
     document.getElementById('customOverlay').style.display = 'none';
+    document.getElementById('overlayText').style.display = '';
+    document.getElementById('overlayConfirm').style.display = '';
+    const oldList = document.querySelector('.manus-chat-list');
+    if (oldList) oldList.remove();
     overlayAction = null;
 }
 function confirmOverlay() {
@@ -738,6 +784,10 @@ function connectWithPin(pin) {
 
     socket.on('fab:projects', (projects) => {
         renderProjects(projects);
+    });
+
+    socket.on('fab:manus_chats', (chats) => {
+        showManusChats(chats);
     });
 
     socket.on('fab:progress', ({ message }) => {
